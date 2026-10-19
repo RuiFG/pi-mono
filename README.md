@@ -1,39 +1,37 @@
 # pi-mono
 
-RuiFG 的 Pi 自研扩展仓库，同时记录日常使用的第三方扩展推荐。
+Pi extensions developed and maintained by RuiFG, with recommendations for third-party extensions.
 
-参考 [jvm/pi-mono](https://github.com/jvm/pi-mono) 的 monorepo 组织方式：自研包集中开发，各包独立安装、独立发布。这里不是 Pi 核心的 fork，也不是所有推荐扩展的聚合安装包。
+## Status
 
-## 当前状态
+This repository currently contains an npm workspaces skeleton. No first-party extensions have been added yet.
 
-仓库目前仅包含 npm workspaces 骨架，尚无自研功能包。
+- `packages/` contains first-party packages.
+- Third-party extensions are documented here and installed separately through Pi.
+- No installer, preset manager, automatic updater, or external service deployment is included.
+- The root package is private and is not published to npm.
 
-- `packages/` 只放自行开发、维护的包。
-- 第三方扩展仅在本文推荐，按需通过 Pi 原生机制安装。
-- 不提供安装器、套餐管理、自动更新或外部服务部署。
-- 根包设置 `private: true`，不发布到 npm；安装根仓库不会自动启用所有扩展。
-
-## 仓库结构
+## Repository structure
 
 ```text
 pi-mono/
 ├── packages/
-│   └── README.md          # 新增自研包的约定
+│   └── README.md          # Package development guidelines
 ├── .gitignore
-├── package.json           # private + npm workspaces
+├── package.json           # Private npm workspace root
 ├── package-lock.json
 └── README.md
 ```
 
-## 自研包
+## Packages
 
-暂无。新增功能包后，在这里维护用途、文档链接和安装方式。
+No packages yet. New packages will be listed here with their purpose, documentation, and installation instructions.
 
-开发约定见 [packages/README.md](./packages/README.md)。
+See [package development guidelines](./packages/README.md).
 
-### 本地开发
+### Local development
 
-准备支持 npm workspaces 的 Node.js/npm；开发具体扩展时，还需安装目标版本的 Pi。
+Use Node.js and npm with workspace support. Developing extensions also requires the target version of Pi.
 
 ```bash
 git clone https://github.com/RuiFG/pi-mono.git
@@ -41,50 +39,50 @@ cd pi-mono
 npm ci
 ```
 
-当前没有外部 npm 依赖，`npm ci` 仅验证并准备根项目，不会安装 Pi 或推荐扩展。构建和测试工具随首个实际功能包引入；骨架阶段不声称有功能测试覆盖。
+There are currently no external npm dependencies. `npm ci` prepares the root project; it does not install Pi or any recommended extensions. Build and test tooling will be added with the first functional package. There are no functional tests at this stage.
 
-## 第三方扩展推荐
+## Recommended extensions
 
-以下扩展由各自上游维护，不属于本仓库的自研代码或必装依赖。按需安装，不需要全部启用。
+These extensions are maintained by their respective upstream projects. They are optional recommendations, not dependencies of this repository. Install only what you need.
 
-安装前请查看上游说明、所支持的 Pi 版本和授权要求。扩展会执行代码；推荐不等同于安全审计或兼容性保证。下面的命令在终端执行，默认安装到用户级 Pi 环境，而不是当前仓库。
+Review each project's documentation, Pi compatibility, and authentication requirements before installing. Extensions execute code; inclusion here is not a security audit or compatibility guarantee. Run the commands below in a terminal to install into your user-level Pi environment.
 
-### 已核对 npm 来源的扩展
+### Extensions with verified npm sources
 
-| 扩展及上游 | 用途 | 安装命令 |
+| Extension | Purpose | Install |
 | --- | --- | --- |
-| [@juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question) | 结构化提问与选项交互 | `pi install npm:@juicesharp/rpiv-ask-user-question` |
-| [@juicesharp/rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) | 任务列表与进度跟踪 | `pi install npm:@juicesharp/rpiv-todo` |
-| [pi-codex-image-gen](https://github.com/jvm/pi-mono/tree/main/packages/pi-codex-image-gen) | 图像生成与编辑；需按上游说明配置认证 | `pi install npm:pi-codex-image-gen` |
-| [pi-lens](https://github.com/apmantza/pi-lens) | LSP、代码导航与诊断；语言工具要求见上游 | `pi install npm:pi-lens` |
-| [pi-live-models](https://github.com/wait4xx/pi-live-models) | 动态模型发现与目录覆盖；需相应提供商配置 | `pi install npm:pi-live-models` |
-| [pi-subagents](https://github.com/nicobailon/pi-subagents) | 子代理委派与工作流；需可用的模型配置 | `pi install npm:pi-subagents` |
-| [pi-web-access](https://github.com/nicobailon/pi-web-access) | 搜索与网页等内容获取；提供商认证要求见上游 | `pi install npm:pi-web-access` |
+| [@juicesharp/rpiv-ask-user-question](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question) | Structured questions with selectable answers | `pi install npm:@juicesharp/rpiv-ask-user-question` |
+| [@juicesharp/rpiv-todo](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) | Task lists and progress tracking | `pi install npm:@juicesharp/rpiv-todo` |
+| [pi-codex-image-gen](https://github.com/jvm/pi-mono/tree/main/packages/pi-codex-image-gen) | Image generation and editing; requires authentication as documented upstream | `pi install npm:pi-codex-image-gen` |
+| [pi-lens](https://github.com/apmantza/pi-lens) | LSP integration, code navigation, and diagnostics; see upstream for language tooling requirements | `pi install npm:pi-lens` |
+| [pi-live-models](https://github.com/wait4xx/pi-live-models) | Live model discovery and catalog overrides; requires provider configuration | `pi install npm:pi-live-models` |
+| [pi-subagents](https://github.com/nicobailon/pi-subagents) | Subagent delegation and workflows; requires usable model configuration | `pi install npm:pi-subagents` |
+| [pi-web-access](https://github.com/nicobailon/pi-web-access) | Web search and content retrieval; see upstream for provider authentication requirements | `pi install npm:pi-web-access` |
 
-已核对上述 npm 包的名称、仓库元数据和 Pi 资源声明；未在本仓库执行安装或组合兼容性测试。命令不固定版本，默认由上游 npm `latest` 标签决定安装版本。这不意味着每次启动 Pi 都会自动升级，也不保证所有上游最新版始终相互兼容。
+Package names, repository metadata, and Pi resource declarations have been checked against npm. Installation and combined compatibility have not been tested in this repository. These commands do not pin versions: npm's upstream `latest` tag determines the version installed. This does not enable automatic updates at Pi startup or guarantee compatibility between all latest releases.
 
-`pi-lens` 与 `pi-web-access` 的 npm 包已声明其 `dist` 资源入口，不要给安装包名追加 `:dist`。
+The npm packages for `pi-lens` and `pi-web-access` already declare their `dist` resource entry points. Do not append `:dist` to their package names.
 
-### 待补充分发来源的集成
+### Integrations awaiting distribution details
 
-| 项目 | 用途 | 当前说明 |
+| Integration | Purpose | Notes |
 | --- | --- | --- |
-| OpenViking 接入扩展 | 持久上下文与记忆接入 | 具体 Pi 扩展的公开来源和安装入口待核对；不能把服务端项目或同名包直接当作 Pi 扩展。需自行准备服务及访问配置。 |
-| `orca-agent-status.ts` | Orca 代理状态集成 | 单文件扩展的上游来源、分发和宿主要求待核对；暂不提供自动安装命令。 |
+| OpenViking integration | Persistent context and memory | The public source and installation entry point for the Pi extension still need verification. Do not assume the server project or a similarly named package is the Pi extension. A service instance and access configuration are required. |
+| `orca-agent-status.ts` | Orca agent status integration | The upstream source, distribution method, and host requirements for this single-file extension still need verification. No installation command is provided yet. |
 
-以上项目仅保留推荐记录，不复制本机文件、不提交服务地址或凭据，也不编造 npm 包名。
+These entries are recommendations only. Local extension files, service addresses, and credentials are not included in this repository.
 
-### 安装后的管理
+### Managing installed extensions
 
 ```bash
 pi list
 pi config
 ```
 
-`pi list` 查看已配置的包，`pi config` 管理资源启用状态。包已配置或安装完成，不代表扩展已正常加载，也不代表服务连接和认证已通过；按各自上游说明验证功能。
+Use `pi list` to inspect configured packages and `pi config` to manage enabled resources. A configured or installed package is not proof of successful loading, service connectivity, or authentication. Follow the upstream instructions to verify each integration.
 
-更新和卸载交给当前 Pi 版本的原生命令。更新前查阅 `pi update --help`，不要将 `pi update` 无参数理解为仅更新扩展。本仓库不修改或接管个人 Pi 配置。
+Use your Pi version's native commands to update or remove extensions. Check `pi update --help` before updating; do not assume that bare `pi update` updates only extensions. This repository does not modify or manage your personal Pi configuration.
 
-## 许可证与发布
+## Licensing and publishing
 
-骨架阶段尚未选定本仓库自研代码的许可证；公开可见不代表授予开源许可。加入并发布实际功能包前，应明确对应许可证、包名及发布范围。第三方扩展始终遵循各自上游许可证。
+A license for first-party code has not yet been selected. Public visibility alone does not grant an open-source license. Before publishing a functional package, specify its license, package name, and published files. Third-party extensions remain subject to their upstream licenses.
