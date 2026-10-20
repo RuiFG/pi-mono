@@ -23,7 +23,7 @@ pi install npm:pi-remote-ssh
 To install this specific release:
 
 ```sh
-pi install npm:pi-remote-ssh@0.1.0
+pi install npm:pi-remote-ssh@0.1.1
 ```
 
 Restart Pi or reload its resources, then run `/ssh`. Pi loads the TypeScript entry directly; no separate build step is required.
@@ -129,7 +129,7 @@ Results distinguish `outcome: "exited"` from `outcome: "unknown"`. A lost connec
 
 With `sudo: true`, the entire command runs through `sudo -u root -- sh`, including redirection and pipelines. The server must allow a root shell. TTY-only sudo and OTP are not supported. The password is requested separately and is never part of command arguments or tool results. Command `stdin` is sent only after authentication succeeds. An incorrect password may be retried inside the same sudo authentication process; the command is never replayed for authentication.
 
-Sudo credentials are separate from SSH credentials. The user may explicitly choose to copy the host's SSH password for sudo. Temporary credentials are discarded when the extension runtime ends. Removing a saved host also removes its stored sudo credential when the vault is available; the plugin does not manage the server's own sudo timestamp.
+Sudo credentials are separate from SSH credentials. When the host's SSH password is available, a single private card offers **Use SSH password** and an editable **Sudo password** row. Press Down to type or paste directly into the masked second row, Up to select reuse, Enter to confirm, or Esc to cancel; there is no intermediate selection dialog. Key-based login, unavailable SSH passwords, and authentication retries show only the password input. These local dialogs never send credentials to the model or conversation. Temporary credentials are discarded when the extension runtime ends. Removing a saved host also removes its stored sudo credential when the vault is available; the plugin does not manage the server's own sudo timestamp.
 
 If a remembered sudo credential cannot be read or removed because the encrypted credential file is unavailable or damaged, the terminal asks **Use a temporary sudo credential?** before requesting a replacement. Accepting keeps the replacement in memory for this runtime only, bound to the same host and connection identity; it does not overwrite the saved credential reference. The saved reference remains after the temporary replacement expires. Declining, cancelling, or running without the terminal fails closed. Vault cleanup failures do not replace command outcomes or cancellation errors.
 

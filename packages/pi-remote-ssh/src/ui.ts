@@ -3,7 +3,7 @@ import { Serial, SshError, errorText, checkAbort, type HostDraft, type HostProfi
 import { RemoteRuntime, type CredentialRequest } from "./runtime.ts";
 import { Permissions, display, type Confirm } from "./permissions.ts";
 import { localPath } from "./paths.ts";
-import { password } from "./password.ts";
+import { password, sudoPassword } from "./password.ts";
 
 /** One queue for dialogs only; never hold it while waiting on an SSH operation. */
 export class Dialogs {
@@ -26,6 +26,9 @@ export class Dialogs {
   }
   password(ctx: ExtensionContext, title: string, signal?: AbortSignal) {
     return this.run(combined => password(ctx, title, combined), signal);
+  }
+  sudoPassword(ctx: ExtensionContext, title: string, signal?: AbortSignal) {
+    return this.run(combined => sudoPassword(ctx, title, combined), signal);
   }
 }
 
@@ -54,13 +57,14 @@ export class CredentialDialogs {
     if (request.temporaryOnly && !await this.dialogs.confirm(ctx)("Use a temporary sudo credential?", "The remembered sudo credential could not be read or removed. Enter a replacement for this runtime only? The old stored credential reference will be kept, and the temporary replacement will be discarded when this runtime ends.", signal)) {
       await this.runtime.replyCredential(request.id); return;
     }
-    let reuse = false;
+    const title = `${request.retry ? "Authentication failed. Retry: " : ""}${request.kind === "sudo" ? "Sudo password" : request.kind === "passphrase" ? "Private key passphrase" : "SSH password"} for ${display(request.hostName)}`;
+    let reuse = false, value: string | undefined;
     if (request.canReuseSSH) {
-      const choice = await this.dialogs.select(ctx, `Sudo password for ${display(request.hostName)}`, ["Enter a separate sudo password", "Use this host's SSH password", "Cancel"], signal);
-      if (!choice || choice === "Cancel") { await this.runtime.replyCredential(request.id); return; }
-      reuse = choice === "Use this host's SSH password";
-    }
-    const value = reuse ? undefined : await this.dialogs.password(ctx, `${request.retry ? "Authentication failed. Retry: " : ""}${request.kind === "sudo" ? "Sudo password" : request.kind === "passphrase" ? "Private key passphrase" : "SSH password"} for ${display(request.hostName)}`, signal);
+      const answer = await this.dialogs.sudoPassword(ctx, title, signal);
+      if (!answer) { await this.runtime.replyCredential(request.id); return; }
+      reuse = answer.reuseSSH;
+      value = answer.reuseSSH ? undefined : answer.value;
+    } else value = await this.dialogs.password(ctx, title, signal);
     if (value === undefined && !reuse) { await this.runtime.replyCredential(request.id); return; }
     const remember = !request.temporaryOnly && await this.dialogs.confirm(ctx)("Remember credential?", "Save to an encrypted file on this computer? The key is stored locally; anyone with both files can decrypt it. Choose No to keep the credential only until this extension runtime ends.", signal);
     checkAbort(signal);
