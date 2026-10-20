@@ -4,7 +4,7 @@ Pi extensions developed and maintained by RuiFG, with recommendations for third-
 
 ## Status
 
-This repository currently contains an npm workspaces skeleton. No first-party extensions have been added yet.
+First-party Pi extensions are developed as npm workspaces and installed individually.
 
 - `packages/` contains first-party packages.
 - Third-party extensions are documented here and installed separately through Pi.
@@ -16,6 +16,7 @@ This repository currently contains an npm workspaces skeleton. No first-party ex
 ```text
 pi-mono/
 ├── packages/
+│   ├── pi-remote-ssh/     # SSH tools and host management
 │   └── README.md          # Package development guidelines
 ├── .gitignore
 ├── package.json           # Private npm workspace root
@@ -25,13 +26,15 @@ pi-mono/
 
 ## Packages
 
-No packages yet. New packages will be listed here with their purpose, documentation, and installation instructions.
+| Package | Purpose | Status |
+| --- | --- | --- |
+| [pi-remote-ssh](./packages/pi-remote-ssh/README.md) | Multi-host SSH/SFTP tools, session authorization, and an interactive `/ssh` menu | Local installation; not published to npm |
 
 See [package development guidelines](./packages/README.md).
 
 ### Local development
 
-Use Node.js and npm with workspace support. Developing extensions also requires the target version of Pi.
+Use Node.js 22.19 or newer and npm. See each package's README for its Pi compatibility baseline.
 
 ```bash
 git clone https://github.com/RuiFG/pi-mono.git
@@ -39,7 +42,13 @@ cd pi-mono
 npm ci
 ```
 
-There are currently no external npm dependencies. `npm ci` prepares the root project; it does not install Pi or any recommended extensions. Build and test tooling will be added with the first functional package. There are no functional tests at this stage.
+`npm ci` installs workspace runtime and development dependencies; it does not register extensions in your personal Pi configuration or install the third-party recommendations below.
+
+```sh
+npm run check
+```
+
+Package-specific integration, installation, and validation instructions are in each package's README.
 
 ## Recommended extensions
 

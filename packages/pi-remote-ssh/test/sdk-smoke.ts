@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { temporary } from "./helpers.ts";
+
+export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts", import.meta.url)), expectVaultUnavailable = false) {
+  const temp = await temporary();
+  const previous = process.env.PI_REMOTE_SSH_DATA_DIR;
+  process.env.PI_REMOTE_SSH_DATA_DIR = path.join(temp.directory, "ssh-data");
+  const settingsManager = SettingsManager.inMemory({ packages: [], extensions: [], compaction: { enabled: false } });
+  const resourceLoader = new DefaultResourceLoader({ cwd: temp.directory, agentDir: path.join(temp.directory, "agent"), settingsManager,
+    additionalExtensionPaths: [extensionPath], noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+  let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+  try {
+    await resourceLoader.reload();
+    assert.deepEqual(resourceLoader.getExtensions().errors, []);
+    const modelRuntime = await ModelRuntime.create({ authPath: path.join(temp.directory, "auth.json"), modelsPath: null, modelsStorePath: path.join(temp.directory, "models-cache.json"), allowModelNetwork: false, refreshOnCreate: false });
+    ({ session } = await createAgentSession({ cwd: temp.directory, agentDir: path.join(temp.directory, "agent"), settingsManager, resourceLoader, modelRuntime, sessionManager: SessionManager.inMemory(temp.directory) }));
+    const errors: string[] = [];
+    const select = ["Add host", "Password", "None", "Close"];
+    const input = ["Smoke host", "example.test", "22", "tester"];
+    const notifications: string[] = [];
+    // In an isolated package without the optional vault: remember fails, then explicitly choose temporary use.
+    const confirmations = expectVaultUnavailable ? [true, true, true] : [true, false];
+    const secret = "sdk-fixture-secret";
+    const ui = {
+      select: async (title: string, choices: string[]) => { const answer = select.shift(); assert.ok(answer && choices.includes(answer), `${title}: unexpected choice ${answer}`); return answer; },
+      input: async () => input.shift(), confirm: async () => confirmations.shift() ?? false,
+      custom: async (factory: (tui: { requestRender(): void }, theme: unknown, keys: unknown, done: (value: string | undefined) => void) => { handleInput(data: string): void; render(width: number): string[]; dispose(): void }) => {
+        let value: string | undefined;
+        const component = factory({ requestRender() {} }, undefined, undefined, result => { value = result; });
+        component.handleInput(secret);
+        assert.ok(!component.render(80).join("\n").includes(secret));
+        component.handleInput("\r"); component.dispose();
+        return value;
+      },
+      notify: (message: string) => notifications.push(message),
+    } as unknown as ExtensionUIContext;
+    await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error.error) });
+    assert.equal(session.getActiveToolNames().filter(n => n.startsWith("ssh_")).length, 14);
+    await session.prompt("/ssh");
+    assert.equal(select.length, 0); assert.equal(input.length, 0); assert.equal(confirmations.length, 0);
+    assert.ok(notifications.includes("Host saved"));
+    const tools = session.agent.state.tools;
+    const listed = await tools.find(tool => tool.name === "ssh_list_hosts")!.execute("list", {}, undefined);
+    assert.ok(JSON.stringify(listed).includes("Smoke host"));
+    assert.ok(!JSON.stringify(listed).includes("credentialId"));
+    assert.ok(!JSON.stringify(listed).includes(secret));
+    assert.ok(!(await readFile(path.join(temp.directory, "ssh-data", "hosts.json"), "utf8")).includes(secret));
+    const profiles = JSON.parse(await readFile(path.join(temp.directory, "ssh-data", "hosts.json"), "utf8")) as { id: string; remembered: boolean }[];
+    assert.equal(profiles[0].remembered, false);
+    const rejected = await tools.find(tool => tool.name === "ssh_shell_exec")!.execute("deny", { hostId: profiles[0].id, command: "id" }, undefined);
+    assert.equal(rejected.isError, true);
+    assert.ok(JSON.stringify(rejected).includes("PERMISSION_DENIED"));
+    assert.deepEqual(errors, []);
+    assert.equal(session.messages.length, 0, "Host configuration and credentials must not enter the conversation");
+    console.log("PASS: real Pi loader, 14 registered tools, /ssh host wizard, tool dispatch, denied mutation, no model requests");
+  } finally {
+    if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); }
+    if (previous === undefined) delete process.env.PI_REMOTE_SSH_DATA_DIR; else process.env.PI_REMOTE_SSH_DATA_DIR = previous;
+    await temp.close();
+  }
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await smoke(process.argv[2]);

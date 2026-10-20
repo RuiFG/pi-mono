@@ -1,6 +1,6 @@
 # Packages
 
-This directory contains packages developed and maintained in this repository. There are no functional packages yet; do not add placeholder extensions.
+This directory contains packages developed and maintained in this repository. See the [package index](../README.md#packages) for available extensions. Add real functionality rather than placeholder packages.
 
 Third-party extensions are listed in the [root README](../README.md#recommended-extensions), not copied into this directory.
 
