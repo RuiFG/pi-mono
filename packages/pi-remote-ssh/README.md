@@ -64,18 +64,17 @@ Deleting a host requires confirmation and closes its connection in the current s
 
 Use **Set login credential** to replace a password or passphrase. Password fields are masked and support typing, paste, Unicode backspace, Enter, Esc, and Ctrl+U. Never enter secrets into the conversation, `/ssh` arguments, tool parameters, or shell command text.
 
-## Authorization
+## Execution and authentication
 
-Before the first shell command, remote file mutation, transfer, or connection reset on a host, the plugin asks for authorization for that host in the current session. The confirmation includes the login identity and jump route. This grant includes destructive remote actions; it is not restricted to one directory.
+**SSH tools execute directly without plugin authorization dialogs.** Shell commands, remote file changes, connection resets, sudo execution, uploads, and downloads do not ask for session or per-operation approval. Tool calls can perform destructive operations and transfer local files without an extra confirmation step.
 
-- `sudo: true` requires separate approval for **each command**, including NOPASSWD sudo.
-- Uploads and downloads require separate confirmation of the local path and transfer direction for **each call**. Local paths are canonicalized before confirmation.
-- Read and search tools can connect without a mutation grant; connection does not imply mutation authorization.
-- Grants are memory-only, bound to the host's connection identity and route, and are not copied into a fork or another process.
-- Session replacement, tree navigation, reload, and shutdown clear grants. Reload Pi or start a new session to request fresh authorization. Revocation does not undo or terminate an operation that has already started.
-- Without an interactive approval channel and an existing grant, mutations fail closed. Masked credential entry requires the terminal UI; it is not forwarded through ordinary RPC text input.
+- `sudo: true` runs the entire command as root when allowed by the server. Password authentication is still required when the server requests it; NOPASSWD commands do not prompt for a password.
+- Local transfer paths are canonicalized. Replacing existing destinations still requires `overwrite: true`, and nonempty directory removal requires `recursive: true` in the tool call. These parameters are not human-approval gates.
+- Non-interactive tools can execute when the necessary credentials are already available. If a password must be entered, the interactive terminal is required; secrets are never forwarded through ordinary RPC text input.
+- Host-key pinning, connection identity checks, timeouts, cancellation, and the prohibition on automatic command replay remain in place.
+- Host-management confirmations and the choice to remember a credential or use it temporarily remain separate from tool execution.
 
-Pi's tool annotations describe read-only and destructive operations for other extensions. They are not an OpenCode-style Plan/Explore policy or a security sandbox. This plugin does not infer an agent's role from its name, and it does not replace local Pi tools. A remote shell command can perform any action permitted by the remote account after authorization. The separate sudo confirmation applies to the structured `sudo: true` option; it cannot prevent escalation embedded inside arbitrary shell code. Enforce privilege restrictions on the server if that is required.
+Pi's tool annotations describe read-only and destructive operations for other extensions; an external permission extension may independently prompt or block calls. This plugin does not infer an agent's role, implement a filesystem sandbox, or restrict operations to one directory. Use remote account permissions, server-side sudo policy, and trusted agent workflows to control access.
 
 ## Tools
 
@@ -129,7 +128,7 @@ Results distinguish `outcome: "exited"` from `outcome: "unknown"`. A lost connec
 
 With `sudo: true`, the entire command runs through `sudo -u root -- sh`, including redirection and pipelines. The server must allow a root shell. TTY-only sudo and OTP are not supported. The password is requested separately and is never part of command arguments or tool results. Command `stdin` is sent only after authentication succeeds. An incorrect password may be retried inside the same sudo authentication process; the command is never replayed for authentication.
 
-Sudo credentials are separate from SSH credentials. When the host's SSH password is available, a single private card offers **Use SSH password** and an editable **Sudo password** row. Press Down to type or paste directly into the masked second row, Up to select reuse, Enter to confirm, or Esc to cancel; there is no intermediate selection dialog. Key-based login, unavailable SSH passwords, and authentication retries show only the password input. These local dialogs never send credentials to the model or conversation. Temporary credentials are discarded when the extension runtime ends. Removing a saved host also removes its stored sudo credential when the vault is available; the plugin does not manage the server's own sudo timestamp.
+Sudo credentials are separate from SSH credentials. When the host's SSH password is available, a single local questionnaire-style dialog offers **1. Use SSH password** and **2. Type something.** The layout follows `rpiv-ask-user-question`: full-width accent rules, a small header badge, numbered options, and a single footer hint. Selecting the second row replaces its placeholder with a masked inline input. Press Down to type or paste directly into the masked second row, Up to select reuse, Enter to confirm, or Esc to cancel; there is no intermediate selection dialog. Key-based login, unavailable SSH passwords, and authentication retries show only the password input. These local dialogs never send credentials to the model or conversation. Temporary credentials are discarded when the extension runtime ends. Removing a saved host also removes its stored sudo credential when the vault is available; the plugin does not manage the server's own sudo timestamp.
 
 If a remembered sudo credential cannot be read or removed because the encrypted credential file is unavailable or damaged, the terminal asks **Use a temporary sudo credential?** before requesting a replacement. Accepting keeps the replacement in memory for this runtime only, bound to the same host and connection identity; it does not overwrite the saved credential reference. The saved reference remains after the temporary replacement expires. Declining, cancelling, or running without the terminal fails closed. Vault cleanup failures do not replace command outcomes or cancellation errors.
 
@@ -163,7 +162,7 @@ If encrypted storage is unwritable, insecurely permissioned, or damaged, saving 
 
 Server fingerprints use **trust on first use (accept-new)** for each endpoint and jump. The first key is recorded automatically; later mismatches fail. This does not authenticate the first connection against a trusted external fingerprint. Verify identity out of band before resetting a trust record.
 
-Connections and working directories are not persisted. A new Pi runtime/session starts disconnected at the remote home on first use. Independent subagent processes do **not** inherit connections, directory snapshots, temporary credentials, or approvals; explicitly set their host directories. This differs from the reference application's shared background-service model.
+Connections and working directories are not persisted. A new Pi runtime/session starts disconnected at the remote home on first use. Independent subagent processes do **not** inherit connections, directory snapshots, or temporary credentials; explicitly set their host directories. This differs from the reference application's shared background-service model.
 
 Unexpected network loss permits a later operation to reconnect and revalidate the previous directory, but never replays the interrupted operation. `ssh_reset_connection` explicitly resets a host's connection without replaying commands.
 
@@ -180,10 +179,10 @@ npm run test:package --workspace pi-remote-ssh
 npm run test:native-tui --workspace pi-remote-ssh
 ```
 
-- `check`: strict TypeScript checking plus unit, authorization, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
+- `check`: strict TypeScript checking plus unit, direct-execution, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
 - `test:integration`: requires Docker; creates isolated Linux OpenSSH servers and jump hosts on loopback ports, then removes its containers/network/test image and temporary data. Includes real sudo authentication and wrong-password retry while a fixture vault rejects reads and deletes. No production host or model provider is used.
 - `test:package`: packs into a temporary directory, installs only package runtime dependencies in an isolated consumer with no OS credential-store binding, and validates Pi loading and remembered encrypted credentials. No model call is made.
-- `test:sdk`: directly validates source loading, 14 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and denied execution through Pi's real SDK with scripted UI responses.
+- `test:sdk`: directly validates source loading, 14 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and cancellation before connecting through Pi's real SDK with scripted UI responses.
 - `test:native-tui`: launches the real Pi CLI in an isolated Unix pseudo-terminal with no model credentials; exercises `/ssh`, the host wizard, and masked password entry, asserting plaintext never appears in terminal output or host configuration.
 
 Linux/WSL validation does not prove Windows/macOS native UI or filesystem behavior. Platform-specific tests must run on those platforms before claiming production support there.

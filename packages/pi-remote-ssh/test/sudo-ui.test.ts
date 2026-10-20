@@ -31,6 +31,27 @@ test("sudo choice focuses the editable second row directly, preserves input on n
   assert.ok(!input.render(80).join("").includes("***"));
 });
 
+test("sudo dialog matches the upstream single-question numbered layout", () => {
+  const input = new PasswordInput("Sudo password for Test", () => {}, () => {}, undefined, () => {});
+  const border = "─".repeat(80);
+  assert.deepEqual(input.render(80), [
+    border, "", "  Sudo ", "", " Sudo password for Test", "",
+    "❯ 1. Use SSH password",
+    "     Use this host's SSH login password for sudo.",
+    "  2. Type something.", "", border, "",
+    " Enter to confirm · ↑/↓ to navigate · Esc to cancel",
+  ]);
+  input.handleInput("\x1b[B");
+  input.handleInput("fixture");
+  const lines = input.render(80);
+  assert.equal(lines[6], "  1. Use SSH password");
+  assert.ok(lines[8].startsWith("❯ 2. *******"));
+  assert.ok(lines[8].includes(CURSOR_MARKER));
+  assert.ok(!lines.join("\n").includes("Type something."));
+  assert.ok(!lines.join("\n").includes("fixture"));
+  assert.ok(!/[╭╮╰╯│]/.test(lines.join("\n")));
+});
+
 test("choosing SSH reuse or cancelling clears the inline password without returning it", () => {
   for (const cancel of [false, true]) {
     let reused = 0;

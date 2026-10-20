@@ -6,7 +6,6 @@ import nodePath from "node:path";
 import { RemoteRuntime } from "./runtime.ts";
 import { SshError, failure, checkAbort } from "./domain.ts";
 import { localPath, remotePath, quote } from "./paths.ts";
-import { Permissions, type Confirm } from "./permissions.ts";
 import { sudoIdentity } from "./sudo.ts";
 import * as files from "./files.ts";
 
@@ -35,7 +34,7 @@ export const READ_ONLY = new Set<ToolName>(["ssh_list_hosts", "ssh_set_workspace
 export const descriptions: Record<ToolName, string> = {
   ssh_list_hosts: "List configured SSH hosts with stable IDs, connection status and this session's per-host working directories. Never returns credentials. All other SSH tools require an explicit hostId; there is no default host.",
   ssh_set_workspace: "Connect or explicitly reconnect one host and set its remote working directory after validation. First connection starts at the login home. Omitting path keeps the current directory. Does not affect other hosts.",
-  ssh_shell_exec: "Execute a command in this host's working directory. Returns stdout, stderr, exitCode and outcome. Default timeout is 120 seconds; 0 disables it. sudo:true requests separate approval and runs the entire command as root. Never include passwords in command or stdin. Temporary cd does not change the stored directory. Never replay an unknown outcome automatically.",
+  ssh_shell_exec: "Execute a command in this host's working directory. Returns stdout, stderr, exitCode and outcome. Default timeout is 120 seconds; 0 disables it. sudo:true runs the entire command as root without an approval dialog; a password is requested only when needed. Never include passwords in command or stdin. Temporary cd does not change the stored directory. Never replay an unknown outcome automatically.",
   ssh_list_directory: "List a remote directory through SFTP with a bounded entry count and truncation marker. Omitted path uses this host's working directory.",
   ssh_read_file: "Read a remote text file through SFTP with 1-based startLine and bounded output. Use ssh_download_file for binary data.",
   ssh_write_file: "Write remote UTF-8 text via SFTP using a temporary file. Requires an existing parent directory and explicit overwrite:true to replace a file.",
@@ -44,14 +43,12 @@ export const descriptions: Record<ToolName, string> = {
   ssh_mkdir: "Create a remote directory through SFTP. Creating missing ancestors requires parents:true.",
   ssh_delete: "Delete a remote path through SFTP. Nonempty directories require recursive:true. Does not recursively follow symbolic links.",
   ssh_move: "Move or rename a remote path through SFTP. Destination is an exact path, not a containing directory. Replacing a destination requires overwrite:true.",
-  ssh_upload_file: "Stream one local file, including binary data, to an exact remote path via SFTP. Local paths are relative to the Pi working directory. Requires host authorization and separate local-file confirmation. overwrite defaults to false.",
-  ssh_download_file: "Stream one remote file to an exact local path via SFTP. Local paths are relative to the Pi working directory. Requires host authorization and separate local-file confirmation. overwrite defaults to false.",
+  ssh_upload_file: "Stream one local file, including binary data, to an exact remote path via SFTP. Local paths are relative to the Pi working directory. Transfers directly without a confirmation dialog. overwrite defaults to false.",
+  ssh_download_file: "Stream one remote file to an exact local path via SFTP. Local paths are relative to the Pi working directory. Transfers directly without a confirmation dialog. overwrite defaults to false.",
   ssh_reset_connection: "Reset this session's connection to one host and revalidate its directory. Does not replay commands or guarantee termination of remote processes. Manually disconnected hosts require ssh_set_workspace instead.",
 };
 export type ToolEnvironment = {
   runtime: RemoteRuntime;
-  permissions: Permissions;
-  confirm: Confirm;
   sessionId: string;
   cwd: string;
   signal?: AbortSignal;
@@ -72,7 +69,7 @@ type ToolArgs = z.output<typeof schemas.ssh_shell_exec>
 export async function executeTool(name: ToolName, input: unknown, env: ToolEnvironment): Promise<Record<string, unknown>> {
   // Each schema has different fields; all accesses below follow a validated tool-name branch.
   const args = schemas[name].parse(input) as ToolArgs;
-  const { runtime, permissions, confirm, sessionId, signal } = env;
+  const { runtime, sessionId, signal } = env;
   checkAbort(signal);
   await runtime.profiles.load();
   if (name === "ssh_list_hosts") {
@@ -81,24 +78,20 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
   const selected = runtime.resolve(sessionId, args.hostId);
   const chain = runtime.profiles.chain(selected.host.id);
   const identity = sudoIdentity(chain);
-  if (!READ_ONLY.has(name)) await permissions.authorize(sessionId, chain, confirm, signal);
-  if (name === "ssh_shell_exec" && args.sudo) await permissions.sudo(selected.host, args.command, confirm, signal);
   let local: string | undefined;
   if (name === "ssh_upload_file" || name === "ssh_download_file") {
     const absolute = localPath(args.localPath, env.cwd);
     local = name === "ssh_upload_file" ? await realpath(absolute) : nodePath.join(await realpath(nodePath.dirname(absolute)), nodePath.basename(absolute));
-    await permissions.transfer(local, `${selected.host.name}:${args.remotePath}`, name === "ssh_upload_file", args.overwrite, confirm, signal);
   }
   checkAbort(signal);
   await runtime.profiles.load();
-  if (identity !== sudoIdentity(runtime.profiles.chain(selected.host.id))) throw new SshError("HOST_CHANGED", "Host configuration changed during approval; retry the operation");
+  if (identity !== sudoIdentity(runtime.profiles.chain(selected.host.id))) throw new SshError("HOST_CHANGED", "Host configuration changed while preparing the operation; retry with the current configuration");
   if (name === "ssh_reset_connection") return { ok: true, ...await runtime.reset(sessionId, selected.host.id, signal) };
   const status = runtime.state(sessionId).hosts.find(item => item.host.id === selected.host.id);
   if (status?.changed) throw new SshError("HOST_CHANGED", "Use ssh_reset_connection for this host to apply its updated configuration");
   const connection = await runtime.connection(sessionId, selected.host.id, name === "ssh_set_workspace", signal);
-  if (sudoIdentity(connection.chain) !== identity) throw new SshError("HOST_CHANGED", "Connection identity no longer matches the approved host");
+  if (sudoIdentity(connection.chain) !== identity) throw new SshError("HOST_CHANGED", "Connection identity no longer matches the selected host");
   checkAbort(signal);
-  if (!READ_ONLY.has(name) && !permissions.has(sessionId, chain)) throw new SshError("PERMISSION_REVOKED", "SSH session permission was revoked before execution");
   const directory = selected.directory ?? connection.home;
   const resolve = (value?: string) => remotePath(value, directory, connection.home);
   const path = resolve(args.path);

@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { RemoteRuntime } from "./src/runtime.ts";
 import { dataDirectory } from "./src/paths.ts";
-import { Permissions, display } from "./src/permissions.ts";
+import { display } from "./src/permissions.ts";
 import { Dialogs, CredentialDialogs, hostMenu } from "./src/ui.ts";
 import { registerTools } from "./src/tools.ts";
 import { errorText } from "./src/domain.ts";
@@ -12,7 +12,6 @@ export default function remoteSsh(pi: ExtensionAPI) {
   let loaded: RemoteRuntime | undefined;
   let credentials: CredentialDialogs | undefined;
   let dialogs = new Dialogs();
-  const permissions = new Permissions();
   let sessionId: string | undefined;
 
   const runtime = () => instance ??= (async () => {
@@ -26,9 +25,9 @@ export default function remoteSsh(pi: ExtensionAPI) {
   const environment = async (ctx: ExtensionContext, signal?: AbortSignal) => {
     current = ctx;
     const id = ctx.sessionManager.getSessionId();
-    if (sessionId && sessionId !== id) { loaded?.release(sessionId); permissions.clear(); }
+    if (sessionId && sessionId !== id) loaded?.release(sessionId);
     sessionId = id;
-    return { runtime: await runtime(), permissions, confirm: dialogs.confirm(ctx), sessionId: id, cwd: ctx.cwd, signal: dialogs.signal(signal) };
+    return { runtime: await runtime(), sessionId: id, cwd: ctx.cwd, signal: dialogs.signal(signal) };
   };
 
   registerTools(pi, environment);
@@ -40,15 +39,14 @@ export default function remoteSsh(pi: ExtensionAPI) {
       await ctx.waitForIdle();
       try {
         const env = await environment(ctx);
-        await hostMenu(ctx, env.runtime, permissions, dialogs, env.sessionId);
+        await hostMenu(ctx, env.runtime, dialogs, env.sessionId);
       } catch (error) { ctx.ui.notify(display(errorText(error)), "error"); }
     },
   });
   pi.on("session_start", async (_event, ctx) => { await environment(ctx); });
   pi.on("session_tree", (_event, ctx) => {
-    // Tree navigation is an authorization boundary; do not carry approvals into a different branch.
+    // Do not carry live connections and working directories into a different branch.
     if (sessionId) loaded?.release(sessionId);
-    permissions.clear();
     current = ctx;
   });
   pi.on("session_shutdown", async () => {
@@ -56,7 +54,6 @@ export default function remoteSsh(pi: ExtensionAPI) {
     credentials?.close();
     // An in-flight lazy load must also be closed, not leaked across reload/session replacement.
     try { (loaded ?? await instance)?.close(); } catch { /* Failed initialization owns no sockets. */ }
-    permissions.clear();
     current = undefined; sessionId = undefined; loaded = undefined; instance = undefined; credentials = undefined;
     dialogs = new Dialogs();
   });

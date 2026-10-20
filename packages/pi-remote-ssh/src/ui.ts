@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Serial, SshError, errorText, checkAbort, type HostDraft, type HostProfile } from "./domain.ts";
 import { RemoteRuntime, type CredentialRequest } from "./runtime.ts";
-import { Permissions, display, type Confirm } from "./permissions.ts";
+import { display, type Confirm } from "./permissions.ts";
 import { localPath } from "./paths.ts";
 import { password, sudoPassword } from "./password.ts";
 
@@ -113,7 +113,7 @@ async function setLoginCredential(ctx: ExtensionContext, dialogs: Dialogs, runti
   }
 }
 
-export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, permissions: Permissions, dialogs: Dialogs, sessionId: string) {
+export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, dialogs: Dialogs, sessionId: string) {
   if (ctx.mode !== "tui") throw new SshError("UI_REQUIRED", "/ssh requires the interactive Pi terminal UI");
   while (true) {
     await runtime.profiles.load();
@@ -141,14 +141,14 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, pe
         }
         case "Edit host": {
           const draft = await draftHost(ctx, dialogs, runtime, host);
-          if (draft) { await runtime.save(draft); permissions.revoke(sessionId); ctx.ui.notify("Host saved. Use ssh_reset_connection to apply changes to an existing connection.", "info"); }
+          if (draft) { await runtime.save(draft); ctx.ui.notify("Host saved. Use ssh_reset_connection to apply changes to an existing connection.", "info"); }
           break;
         }
         case "Set login credential": await setLoginCredential(ctx, dialogs, runtime, host); break;
         case "Delete host":
           if (await dialogs.confirm(ctx)("Delete host?", `Remove ${display(host.name)} and its stored credentials? Its connection in this session will be closed. Deletion is blocked if another connection still uses this host.`)) {
             await runtime.disconnect(sessionId, host.id);
-            await runtime.deleteHost(host.id); permissions.clear();
+            await runtime.deleteHost(host.id);
           }
           break;
       }

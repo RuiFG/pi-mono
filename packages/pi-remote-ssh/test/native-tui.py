@@ -88,9 +88,10 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
         assert "native-fixture-secret" not in hosts.read_text()
         rendered = ansi.sub("", all_output)
         assert "native-fixture-secret" not in rendered
-        assert "SSH CREDENTIAL" in rendered and "Private input" in rendered
-        assert "Kept out of chat and model context." in rendered
-        print("PASS: native Pi TUI /ssh, English host wizard, themed private credential card, no plaintext output, isolated configuration")
+        assert "Enter to confirm" in rendered and "Ctrl+U to clear" in rendered
+        assert "❯ 1." in rendered and "─" * 100 in rendered
+        assert "SSH CREDENTIAL" not in rendered and "Private input" not in rendered
+        print("PASS: native Pi TUI /ssh, questionnaire-style masked credential input, no plaintext output, isolated configuration")
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)

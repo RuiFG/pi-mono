@@ -57,12 +57,15 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     assert.ok(!(await readFile(path.join(directory, "vault.json"), "utf8")).includes(secret));
     const { EncryptedFileSecrets } = await import(pathToFileURL(path.join(path.dirname(extensionPath), "src/credentials.ts")).href);
     assert.equal(await new EncryptedFileSecrets(directory).get(profiles[0].credentialId), secret);
-    const rejected = await tools.find(tool => tool.name === "ssh_shell_exec")!.execute("deny", { hostId: profiles[0].id, command: "id" }, undefined);
+    // Cancel before connecting: the smoke test must never contact the fixture hostname.
+    const controller = new AbortController(); controller.abort();
+    const rejected = await tools.find(tool => tool.name === "ssh_shell_exec")!.execute("cancel", { hostId: profiles[0].id, command: "id" }, controller.signal);
     assert.equal(rejected.isError, true);
-    assert.ok(JSON.stringify(rejected).includes("PERMISSION_DENIED"));
+    assert.ok(JSON.stringify(rejected).includes("CANCELLED"));
+    assert.deepEqual(confirmationTitles, ["Set login credential now?", "Remember credential?"]);
     assert.deepEqual(errors, []);
     assert.equal(session.messages.length, 0, "Host configuration and credentials must not enter the conversation");
-    console.log("PASS: real Pi loader, 14 tools, /ssh wizard, encrypted credential persistence without OS vault or fallback, denied mutation, no model requests");
+    console.log("PASS: real Pi loader, 14 tools, /ssh wizard, encrypted credential persistence without OS vault or fallback, cancelled execution, no model requests");
   } finally {
     if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); }
     if (previous === undefined) delete process.env.PI_REMOTE_SSH_DATA_DIR; else process.env.PI_REMOTE_SSH_DATA_DIR = previous;

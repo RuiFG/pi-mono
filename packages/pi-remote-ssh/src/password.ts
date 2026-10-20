@@ -8,7 +8,7 @@ export class PasswordInput implements Component, Focusable {
   private value = "";
   private paste = false;
   private reuseSelected: boolean;
-  constructor(private title: string, private done: (value: string | undefined) => void, private renderAgain: () => void, private theme?: Pick<Theme, "fg" | "bold">, private reuseSSH?: () => void) {
+  constructor(private title: string, private done: (value: string | undefined) => void, private renderAgain: () => void, private theme?: Pick<Theme, "fg" | "bold"> & Partial<Pick<Theme, "bg">>, private reuseSSH?: () => void) {
     this.reuseSelected = !!reuseSSH;
   }
   invalidate() {}
@@ -60,33 +60,30 @@ export class PasswordInput implements Component, Focusable {
         prefix + mask + cursor,
         truncateToWidth(this.reuseSSH ? "↑↓: select | Enter: confirm | Esc: cancel" : "Enter: confirm | Esc: cancel | Ctrl+U: clear", width)];
     }
-    const cardWidth = Math.min(width, 80), inner = cardWidth - 4;
-    const row = (text = "") => {
-      const clipped = truncateToWidth(text, inner);
-      return color("borderMuted", "│") + " " + clipped + " ".repeat(Math.max(0, inner - visibleWidth(clipped))) + " " + color("borderMuted", "│");
-    };
-    const border = (left: string, right: string) => color("borderMuted", left + "─".repeat(cardWidth - 2) + right);
-    const prefix = `${this.reuseSelected ? "  " : "› "}${this.reuseSSH ? "Sudo password: " : ""}`;
-    const available = inner - visibleWidth(prefix) - 1;
+    // Match rpiv-ask-user-question's single-question chrome and numbered inline row.
+    // Only masked characters reach layout/theme helpers, never the credential buffer.
+    const selected = (text: string) => color("accent", bold(text));
+    const border = color("accent", "─".repeat(width));
+    const header = this.title.includes("Sudo password") ? "Sudo" : "SSH";
+    const badge = ` ${header} `;
+    const inputActive = this.focused && !this.reuseSelected;
+    const prefix = `${inputActive ? "❯ " : "  "}${this.reuseSSH ? "2" : "1"}. `;
+    const available = width - visibleWidth(prefix) - 1;
     const mask = "*".repeat(Math.min(length, available));
-    const input = color(this.reuseSelected ? "muted" : "accent", prefix) + color("text", mask) + cursor;
-    // Keep the cursor marker out of truncation/padding operations.
-    const inputRow = color("borderMuted", "│") + " " + input + " ".repeat(available - mask.length) + " " + color("borderMuted", "│");
-    const hints = inner >= 48 ? "Enter: confirm  ·  Esc: cancel  ·  Ctrl+U: clear" : "Enter: confirm  ·  Esc: cancel";
+    const input = inputActive
+      ? selected(prefix + mask + cursor)
+      : prefix + (mask || "Type something.");
+    const reuseActive = this.focused && this.reuseSelected;
+    const reuse = `${reuseActive ? "❯" : " "} 1. Use SSH password`;
+    const hints = ["Enter to confirm", ...(this.reuseSSH ? ["↑/↓ to navigate"] : []), "Esc to cancel", ...(!this.reuseSelected ? ["Ctrl+U to clear"] : [])].join(" · ");
     return [
-      border("╭", "╮"),
-      row(color("accent", bold("SSH CREDENTIAL")) + color("muted", "  /  Private input")),
-      row(),
-      ...wrapTextWithAnsi(bold(display(this.title)), inner).map(line => row(line)),
-      row(color("muted", this.reuseSSH ? "↓ to enter a different sudo password." : "Type or paste below. Input is masked.")),
-      row(),
-      ...(this.reuseSSH ? [row(color(this.reuseSelected ? "accent" : "muted", `${this.reuseSelected ? "›" : " "} Use SSH password`))] : []),
-      inputRow, row(),
-      ...wrapTextWithAnsi(color("dim", "Kept out of chat and model context."), inner).map(line => row(line)),
-      border("╰", "╯"),
-      ...(this.reuseSSH ? [color("muted", " ↑/↓ or Tab: select")] : []),
-      color("muted", truncateToWidth(" " + hints, cardWidth)),
-      ...(inner < 48 ? [color("muted", " Ctrl+U: clear")] : []),
+      border, "",
+      " " + (this.theme?.bg?.("selectedBg", badge) ?? badge), "",
+      ...wrapTextWithAnsi(bold(display(this.title)), width - 2).map(line => " " + line), "",
+      ...(this.reuseSSH ? [reuseActive ? selected(reuse) : reuse,
+        ...wrapTextWithAnsi("Use this host's SSH login password for sudo.", width - 5).map(line => "     " + color("muted", line))] : []),
+      input, "", border, "",
+      color("dim", truncateToWidth(" " + hints, width)),
     ];
   }
 }

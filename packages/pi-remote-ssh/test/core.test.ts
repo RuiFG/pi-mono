@@ -6,7 +6,8 @@ import { Profiles, HostKeys } from "../src/storage.ts";
 import { Credentials } from "../src/credentials.ts";
 import { RemoteRuntime } from "../src/runtime.ts";
 import { remotePath, quote } from "../src/paths.ts";
-import { Permissions } from "../src/permissions.ts";
+import type { Connection, Connector } from "../src/transport.ts";
+import type { HostProfile } from "../src/domain.ts";
 import { PasswordInput } from "../src/password.ts";
 import { schemas, executeTool, registerTools, toolResult, READ_ONLY } from "../src/tools.ts";
 import { CredentialDialogs, Dialogs } from "../src/ui.ts";
@@ -65,35 +66,42 @@ test("paths follow remote Linux rules and shell quoting cannot interpolate", () 
   assert.throws(() => quote("bad\0value"));
 });
 
-test("session grants are deduplicated, bound to connection identity, revocable, and never inherited", async t => {
+test("ordinary commands and NOPASSWD sudo execute without an approval channel, including in a new session", async t => {
   const temp = await temporary(); t.after(temp.close);
-  const profiles = new Profiles(path.join(temp.directory, "hosts.json")); await profiles.load();
-  const host = await profiles.save(draft), permissions = new Permissions();
-  let prompts = 0;
-  const yes = async () => { prompts++; return true; };
-  await Promise.all([permissions.authorize("s", [host], yes), permissions.authorize("s", [host], yes)]);
-  assert.equal(prompts, 1);
-  assert.equal(permissions.has("child", [host]), false);
-  assert.equal(permissions.has("s", [{ ...host, hostname: "different" }]), false);
-  await permissions.sudo(host, "id -u", yes); await permissions.sudo(host, "id -u", yes);
-  assert.equal(prompts, 3);
-  permissions.revoke("s"); assert.equal(permissions.has("s", [host]), false);
-  await assert.rejects(permissions.authorize("s", [host], async () => false), /declined/);
-  const controller = new AbortController();
-  await assert.rejects(permissions.authorize("s", [host], async () => { controller.abort(); return true; }, controller.signal), /cancelled/);
-  assert.equal(permissions.has("s", [host]), false);
-  await assert.rejects(permissions.authorize("s", [host], async () => { permissions.clear(); return true; }), /changed/);
+  const commands: string[] = [];
+  const connector = { connect: async (chain: HostProfile[]) => ({
+    chain, alive: true, home: "/home/tester", sftpAvailable: true,
+    onClose() {}, close() {}, directory: async (directory: string) => directory,
+    exec: async (command: string) => { commands.push(command); return { stdout: "done", stderr: "", exitCode: 0, outcome: "exited", elevated: true }; },
+  }) as unknown as Connection } as unknown as Connector;
+  const runtime = new RemoteRuntime(temp.directory, new MemoryVault(), connector); await runtime.load(); t.after(() => runtime.close());
+  const host = await runtime.save(draft);
+  for (const sessionId of ["headless", "new-session"]) {
+    const env = { runtime, sessionId, cwd: temp.directory };
+    assert.equal((await executeTool("ssh_shell_exec", { hostId: host.id, command: "id" }, env)).ok, true);
+    assert.equal((await executeTool("ssh_shell_exec", { hostId: host.id, command: "id -u", sudo: true }, env)).ok, true);
+  }
+  assert.equal(commands.length, 4);
+  // A connection established under a different identity is still rejected before execution.
+  const originalConnect = runtime.connection.bind(runtime);
+  runtime.connection = async (...args) => {
+    const connection = await originalConnect(...args);
+    return { ...connection, chain: [{ ...host, hostname: "changed.test" }] } as Connection;
+  };
+  await assert.rejects(executeTool("ssh_shell_exec", { hostId: host.id, command: "id" }, { runtime, sessionId: "headless", cwd: temp.directory }), { code: "HOST_CHANGED" });
+  assert.equal(commands.length, 4);
 });
 
-test("headless mutations fail before opening connections; discovery redacts credentials and IDs are mandatory", async t => {
+test("cancelled operations fail before opening connections; discovery redacts credentials and IDs are mandatory", async t => {
   const temp = await temporary(); t.after(temp.close);
   const runtime = new RemoteRuntime(temp.directory, new MemoryVault()); await runtime.load(); t.after(() => runtime.close());
   const host = await runtime.save(draft, "private-test-password", false);
-  const env = { runtime, permissions: new Permissions(), confirm: async () => false, sessionId: "headless", cwd: temp.directory };
+  const env = { runtime, sessionId: "headless", cwd: temp.directory };
+  const controller = new AbortController(); controller.abort();
   for (const [name, args] of [
     ["ssh_shell_exec", { command: "id" }], ["ssh_write_file", { path: "a", content: "x" }],
     ["ssh_reset_connection", {}], ["ssh_download_file", { remotePath: "a", localPath: "b" }],
-  ] as const) await assert.rejects(executeTool(name, { hostId: host.id, ...args }, env), /declined/);
+  ] as const) await assert.rejects(executeTool(name, { hostId: host.id, ...args }, { ...env, signal: controller.signal }), /cancelled/);
   assert.equal(runtime.state("headless").hosts[0].status, "disconnected");
   const list = JSON.stringify(await executeTool("ssh_list_hosts", {}, env));
   assert.ok(!list.includes("credentialId") && !list.includes("private-test-password"));

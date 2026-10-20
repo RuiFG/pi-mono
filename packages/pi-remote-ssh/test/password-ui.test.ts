@@ -7,7 +7,7 @@ import { PasswordInput, password } from "../src/password.ts";
 const secret = "fixture-secret-密码-🗝";
 const plain = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").replaceAll(CURSOR_MARKER, "");
 
-test("SSH and sudo password cards are themed, masked and bounded across terminal widths", () => {
+test("questionnaire-style SSH and sudo inputs are themed, masked and bounded across terminal widths", () => {
   const themed: string[] = [];
   const theme = {
     fg: (_token: string, text: string) => { themed.push(text); return `\x1b[36m${text}\x1b[39m`; },
@@ -24,10 +24,12 @@ test("SSH and sudo password cards are themed, masked and bounded across terminal
       assert.ok(!lines.join("").includes(secret));
       if (width >= 80) {
         const rendered = lines.map(plain).join("\n");
-        assert.match(rendered, /SSH CREDENTIAL/);
-        assert.match(rendered, /Kept out of chat and model context/);
-        assert.match(rendered, /Ctrl\+U: clear/);
-        assert.ok(rendered.startsWith("╭"));
+        assert.equal(plain(lines[0]), "─".repeat(width));
+        assert.equal(plain(lines[2]), title.includes("Sudo password") ? "  Sudo " : "  SSH ");
+        assert.match(rendered, /❯ 1\. \*+/);
+        assert.match(rendered, /Ctrl\+U to clear/);
+        assert.ok(!/[╭╮╰╯│]/.test(rendered));
+        assert.ok(!rendered.includes("Private input"));
       }
     }
     input.focused = false;

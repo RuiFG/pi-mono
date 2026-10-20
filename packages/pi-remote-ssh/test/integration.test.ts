@@ -6,7 +6,6 @@ import { randomBytes, createHash } from "node:crypto";
 import { dockerFixture } from "./docker.ts";
 import { MemoryVault, temporary } from "./helpers.ts";
 import { RemoteRuntime } from "../src/runtime.ts";
-import { Permissions } from "../src/permissions.ts";
 import { executeTool, type ToolName } from "../src/tools.ts";
 import * as files from "../src/files.ts";
 import { SshError, type HostProfile } from "../src/domain.ts";
@@ -16,8 +15,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INTEGRATION !== "1", timeout: 300_000 }, () => {
   let fixture: Awaited<ReturnType<typeof dockerFixture>>, temp: Awaited<ReturnType<typeof temporary>>, runtime: RemoteRuntime, host: HostProfile;
-  const permissions = new Permissions();
-  const run = (name: ToolName, args: object, sessionId = "tools") => executeTool(name, { hostId: host.id, ...args }, { runtime, permissions, confirm: async () => true, sessionId, cwd: temp.directory });
+  // No UI or confirmation callback: all tools, including sudo and transfers, execute directly.
+  const run = (name: ToolName, args: object, sessionId = "tools") => executeTool(name, { hostId: host.id, ...args }, { runtime, sessionId, cwd: temp.directory });
   before(async () => {
     fixture = await dockerFixture(); temp = await temporary();
     runtime = new RemoteRuntime(temp.directory, new MemoryVault()); await runtime.load();
@@ -140,7 +139,7 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
       bridge = new CredentialDialogs(recovered, dialogs, () => ctx);
       const marker = `/tmp/pi-vault-recovery-${key.id}`;
       const result = await executeTool("ssh_shell_exec", { hostId: key.id, sudo: true, command: `printf once >> '${marker}'; id -u; cat`, stdin: "separate-input\n", timeoutMs: 15_000 }, {
-        runtime: recovered, permissions: new Permissions(), confirm: dialogs.confirm(ctx), sessionId: "recovery", cwd: isolated.directory,
+        runtime: recovered, sessionId: "recovery", cwd: isolated.directory,
       });
       assert.equal(result.ok, true); assert.equal(result.stdout, "0\nseparate-input\n");
       assert.equal(passwords.length, 0);
