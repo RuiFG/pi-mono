@@ -92,6 +92,10 @@ Use `pi list` to inspect configured packages and `pi config` to manage enabled r
 
 Use your Pi version's native commands to update or remove extensions. Check `pi update --help` before updating; do not assume that bare `pi update` updates only extensions. This repository does not modify or manage your personal Pi configuration.
 
+## Releases
+
+Maintainers can publish `pi-remote-ssh` by pushing a matching `pi-remote-ssh-v<version>` tag. GitHub Actions validates and packs the package, publishes it through npm OIDC trusted publishing, and creates a GitHub Release. Ordinary pushes to `main` do not publish. See the [release setup and recovery guide](./docs/releases.md), including the required npm trusted-publisher setup.
+
 ## Licensing and publishing
 
 Licenses are specified per package. [pi-remote-ssh](./packages/pi-remote-ssh/README.md) is licensed under the [MIT License](./packages/pi-remote-ssh/LICENSE). Before publishing another functional package, specify its license, package name, and published files; public visibility alone does not grant an open-source license. Third-party extensions remain subject to their upstream licenses.

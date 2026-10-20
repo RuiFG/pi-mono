@@ -9,8 +9,9 @@
   },
   "engines": { "node": ">=22.19.0" },
   "scripts": {
-    "check": "npm run check --workspaces",
-    "test": "npm run test --workspaces"
+    "check": "npm run test:release && npm run check --workspaces",
+    "test": "npm run test:release && npm run test --workspaces",
+    "test:release": "node --test .github/scripts/pi-remote-ssh-release.test.mjs"
   },
   "workspaces": [
     "packages/*"
