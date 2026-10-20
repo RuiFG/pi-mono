@@ -23,7 +23,7 @@ pi install npm:pi-remote-ssh
 To install this specific release:
 
 ```sh
-pi install npm:pi-remote-ssh@0.1.1
+pi install npm:pi-remote-ssh@0.1.2
 ```
 
 Restart Pi or reload its resources, then run `/ssh`. Pi loads the TypeScript entry directly; no separate build step is required.
@@ -69,7 +69,7 @@ Use **Set login credential** to replace a password or passphrase. Password field
 **SSH tools execute directly without plugin authorization dialogs.** Shell commands, remote file changes, connection resets, sudo execution, uploads, and downloads do not ask for session or per-operation approval. Tool calls can perform destructive operations and transfer local files without an extra confirmation step.
 
 - `sudo: true` runs the entire command as root when allowed by the server. Password authentication is still required when the server requests it; NOPASSWD commands do not prompt for a password.
-- Local transfer paths are canonicalized. Replacing existing destinations still requires `overwrite: true`, and nonempty directory removal requires `recursive: true` in the tool call. These parameters are not human-approval gates.
+- Local transfer paths are canonicalized. Replacing existing destinations through write/upload/download tools still requires `overwrite: true`. This parameter is not a human-approval gate and does not apply to arbitrary shell commands.
 - Non-interactive tools can execute when the necessary credentials are already available. If a password must be entered, the interactive terminal is required; secrets are never forwarded through ordinary RPC text input.
 - Host-key pinning, connection identity checks, timeouts, cancellation, and the prohibition on automatic command replay remain in place.
 - Host-management confirmations and the choice to remember a credential or use it temporarily remain separate from tool execution.
@@ -85,14 +85,10 @@ Start with `ssh_list_hosts` to obtain stable IDs. Every other tool requires `hos
 | `ssh_list_hosts` | No parameters; returns IDs, names, status, and session directories without credentials |
 | `ssh_set_workspace` | `path?` |
 | `ssh_shell_exec` | `command`, `sudo?`, `stdin?`, `timeoutMs?` |
-| `ssh_list_directory` | `path?`, `limit?` |
 | `ssh_read_file` | `path`, `startLine?`, `limit?` |
 | `ssh_write_file` | `path`, `content`, `overwrite?` |
 | `ssh_grep` | `pattern`, `path?`, `include?`, `ignoreCase?`, `limit?` |
 | `ssh_glob` | `pattern`, `path?`, `limit?` |
-| `ssh_mkdir` | `path`, `parents?` |
-| `ssh_delete` | `path`, `recursive?` |
-| `ssh_move` | `source`, `destination`, `overwrite?` |
 | `ssh_upload_file` | `localPath`, `remotePath`, `overwrite?` |
 | `ssh_download_file` | `remotePath`, `localPath`, `overwrite?` |
 | `ssh_reset_connection` | No additional parameters |
@@ -113,9 +109,8 @@ Each host has a separate working directory in the current Pi session. The first 
 Remote paths follow Linux rules. `~` and `~/` expand to the remote home; `~other-user` is not supported. Local relative paths resolve against Pi's working directory. Transfer destinations are exact file paths, not containing directories.
 
 - Existing destinations require explicit `overwrite: true`.
-- Nonempty directory deletion requires `recursive: true`; recursive deletion does not follow directory symlinks.
-- Missing directory ancestors require `parents: true` with `ssh_mkdir`.
-- Write/upload/move/download parent directories must exist.
+- Create/list directories and move/delete paths with `ssh_shell_exec`, using the remote server's commands such as `mkdir`, `ls`, `mv`, and `rm`. Quote paths correctly; shell commands follow the server's own semantics and have no plugin overwrite or recursive-delete guard.
+- Write/upload/download parent directories must exist; create missing directories with a shell command first.
 - Transfers stream one file at a time, including binary files. Archive directories before transferring them.
 - Remote file replacement uses the OpenSSH atomic rename extension where available; it never deletes the original first to emulate replacement.
 - Reads, searches, directory traversal, and tool output are bounded and report truncation. Request smaller ranges or fewer entries when output is truncated.
@@ -182,7 +177,7 @@ npm run test:native-tui --workspace pi-remote-ssh
 - `check`: strict TypeScript checking plus unit, direct-execution, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
 - `test:integration`: requires Docker; creates isolated Linux OpenSSH servers and jump hosts on loopback ports, then removes its containers/network/test image and temporary data. Includes real sudo authentication and wrong-password retry while a fixture vault rejects reads and deletes. No production host or model provider is used.
 - `test:package`: packs into a temporary directory, installs only package runtime dependencies in an isolated consumer with no OS credential-store binding, and validates Pi loading and remembered encrypted credentials. No model call is made.
-- `test:sdk`: directly validates source loading, 14 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and cancellation before connecting through Pi's real SDK with scripted UI responses.
+- `test:sdk`: directly validates source loading, 10 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and cancellation before connecting through Pi's real SDK with scripted UI responses.
 - `test:native-tui`: launches the real Pi CLI in an isolated Unix pseudo-terminal with no model credentials; exercises `/ssh`, the host wizard, and masked password entry, asserting plaintext never appears in terminal output or host configuration.
 
 Linux/WSL validation does not prove Windows/macOS native UI or filesystem behavior. Platform-specific tests must run on those platforms before claiming production support there.

@@ -40,7 +40,10 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
       notify: (message: string) => notifications.push(message),
     } as unknown as ExtensionUIContext;
     await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error.error) });
-    assert.equal(session.getActiveToolNames().filter(n => n.startsWith("ssh_")).length, 14);
+    assert.deepEqual(session.getActiveToolNames().filter(n => n.startsWith("ssh_")).sort(), [
+      "ssh_list_hosts", "ssh_set_workspace", "ssh_shell_exec", "ssh_read_file", "ssh_write_file",
+      "ssh_grep", "ssh_glob", "ssh_upload_file", "ssh_download_file", "ssh_reset_connection",
+    ].sort());
     await session.prompt("/ssh");
     assert.equal(select.length, 0); assert.equal(input.length, 0); assert.equal(confirmations.length, 0);
     assert.ok(notifications.includes("Host saved"));
@@ -65,7 +68,7 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     assert.deepEqual(confirmationTitles, ["Set login credential now?", "Remember credential?"]);
     assert.deepEqual(errors, []);
     assert.equal(session.messages.length, 0, "Host configuration and credentials must not enter the conversation");
-    console.log("PASS: real Pi loader, 14 tools, /ssh wizard, encrypted credential persistence without OS vault or fallback, cancelled execution, no model requests");
+    console.log("PASS: real Pi loader, 10 tools, /ssh wizard, encrypted credential persistence without OS vault or fallback, cancelled execution, no model requests");
   } finally {
     if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); }
     if (previous === undefined) delete process.env.PI_REMOTE_SSH_DATA_DIR; else process.env.PI_REMOTE_SSH_DATA_DIR = previous;

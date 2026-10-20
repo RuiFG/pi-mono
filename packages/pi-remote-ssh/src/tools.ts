@@ -17,32 +17,24 @@ export const schemas = {
   ssh_list_hosts: z.object({}).strict(),
   ssh_set_workspace: z.object({ ...common, path: remote.optional() }).strict(),
   ssh_shell_exec: z.object({ ...common, command: z.string().min(1).max(128 * 1024).refine(v => !v.includes("\0"), "Command contains NUL"), sudo: z.boolean().default(false), stdin: z.string().max(4 * 1024 * 1024).optional(), timeoutMs: z.number().int().min(0).max(2_147_483_647).default(120_000) }).strict(),
-  ssh_list_directory: z.object({ ...common, path: remote.optional(), limit: limit(500, 5000) }).strict(),
   ssh_read_file: z.object({ ...common, path: remote, startLine: limit(1, 10_000_000), limit: limit(2000, 10_000) }).strict(),
   ssh_write_file: z.object({ ...common, path: remote, content: z.string().max(4 * 1024 * 1024), overwrite: z.boolean().default(false) }).strict(),
   ssh_grep: z.object({ ...common, path: remote.optional(), pattern: z.string().min(1).max(8192), include: z.string().optional(), ignoreCase: z.boolean().default(false), limit: limit(200, 2000) }).strict(),
   ssh_glob: z.object({ ...common, path: remote.optional(), pattern: z.string().min(1).max(8192), limit: limit(500, 5000) }).strict(),
-  ssh_mkdir: z.object({ ...common, path: remote, parents: z.boolean().default(false) }).strict(),
-  ssh_delete: z.object({ ...common, path: remote, recursive: z.boolean().default(false) }).strict(),
-  ssh_move: z.object({ ...common, source: remote, destination: remote, overwrite: z.boolean().default(false) }).strict(),
   ssh_upload_file: z.object({ ...common, localPath: remote, remotePath: remote, overwrite: z.boolean().default(false) }).strict(),
   ssh_download_file: z.object({ ...common, remotePath: remote, localPath: remote, overwrite: z.boolean().default(false) }).strict(),
   ssh_reset_connection: z.object(common).strict(),
 };
 export type ToolName = keyof typeof schemas;
-export const READ_ONLY = new Set<ToolName>(["ssh_list_hosts", "ssh_set_workspace", "ssh_list_directory", "ssh_read_file", "ssh_grep", "ssh_glob"]);
+export const READ_ONLY = new Set<ToolName>(["ssh_list_hosts", "ssh_set_workspace", "ssh_read_file", "ssh_grep", "ssh_glob"]);
 export const descriptions: Record<ToolName, string> = {
   ssh_list_hosts: "List configured SSH hosts with stable IDs, connection status and this session's per-host working directories. Never returns credentials. All other SSH tools require an explicit hostId; there is no default host.",
   ssh_set_workspace: "Connect or explicitly reconnect one host and set its remote working directory after validation. First connection starts at the login home. Omitting path keeps the current directory. Does not affect other hosts.",
   ssh_shell_exec: "Execute a command in this host's working directory. Returns stdout, stderr, exitCode and outcome. Default timeout is 120 seconds; 0 disables it. sudo:true runs the entire command as root without an approval dialog; a password is requested only when needed. Never include passwords in command or stdin. Temporary cd does not change the stored directory. Never replay an unknown outcome automatically.",
-  ssh_list_directory: "List a remote directory through SFTP with a bounded entry count and truncation marker. Omitted path uses this host's working directory.",
   ssh_read_file: "Read a remote text file through SFTP with 1-based startLine and bounded output. Use ssh_download_file for binary data.",
   ssh_write_file: "Write remote UTF-8 text via SFTP using a temporary file. Requires an existing parent directory and explicit overwrite:true to replace a file.",
   ssh_grep: "Search remote file content using the server's existing grep extended regular expressions. Optional include filters filenames. Output is bounded; no helper is installed remotely.",
   ssh_glob: "Find relative paths through SFTP using glob patterns, including **. Does not recurse into directory symlinks. Results and traversal are bounded.",
-  ssh_mkdir: "Create a remote directory through SFTP. Creating missing ancestors requires parents:true.",
-  ssh_delete: "Delete a remote path through SFTP. Nonempty directories require recursive:true. Does not recursively follow symbolic links.",
-  ssh_move: "Move or rename a remote path through SFTP. Destination is an exact path, not a containing directory. Replacing a destination requires overwrite:true.",
   ssh_upload_file: "Stream one local file, including binary data, to an exact remote path via SFTP. Local paths are relative to the Pi working directory. Transfers directly without a confirmation dialog. overwrite defaults to false.",
   ssh_download_file: "Stream one remote file to an exact local path via SFTP. Local paths are relative to the Pi working directory. Transfers directly without a confirmation dialog. overwrite defaults to false.",
   ssh_reset_connection: "Reset this session's connection to one host and revalidate its directory. Does not replay commands or guarantee termination of remote processes. Manually disconnected hosts require ssh_set_workspace instead.",
@@ -60,10 +52,7 @@ type ToolArgs = z.output<typeof schemas.ssh_shell_exec>
   & z.output<typeof schemas.ssh_read_file>
   & z.output<typeof schemas.ssh_write_file>
   & z.output<typeof schemas.ssh_grep>
-  & z.output<typeof schemas.ssh_move>
-  & z.output<typeof schemas.ssh_upload_file>
-  & z.output<typeof schemas.ssh_mkdir>
-  & z.output<typeof schemas.ssh_delete>;
+  & z.output<typeof schemas.ssh_upload_file>;
 
 // Runtime Zod parsing applies defaults and rejects unknown fields even for programmatic calls.
 export async function executeTool(name: ToolName, input: unknown, env: ToolEnvironment): Promise<Record<string, unknown>> {
@@ -104,14 +93,10 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
       const output = args.sudo ? await runtime.execSudo(sessionId, connection, command, options) : await connection.exec(command, options);
       return { ok: output.exitCode === 0 && output.outcome === "exited" && !output.timedOut && !output.cancelled, hostId: selected.host.id, directory, ...output };
     }
-    case "ssh_list_directory": result = await files.listDirectory(connection, path, args.limit, signal); break;
     case "ssh_read_file": result = await files.readText(connection, path, args.startLine, args.limit, signal); break;
     case "ssh_write_file": result = await files.upload(connection, Buffer.from(args.content), path, args.overwrite, signal); break;
     case "ssh_grep": result = await files.grep(connection, path, args.pattern, args.include, args.ignoreCase, args.limit, signal); break;
     case "ssh_glob": result = await files.glob(connection, path, args.pattern, args.limit, signal); break;
-    case "ssh_mkdir": result = await files.mkdir(connection, path, args.parents, signal); break;
-    case "ssh_delete": result = await files.remove(connection, path, args.recursive, signal); break;
-    case "ssh_move": result = await files.move(connection, resolve(args.source), resolve(args.destination), args.overwrite, signal); break;
     case "ssh_upload_file": result = await files.upload(connection, local!, resolve(args.remotePath), args.overwrite, signal, env.progress); break;
     case "ssh_download_file": result = await files.download(connection, resolve(args.remotePath), local!, args.overwrite, signal, env.progress); break;
   }

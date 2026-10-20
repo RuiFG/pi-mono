@@ -96,7 +96,7 @@ test("changed hosts require an explicit reset tool call, without an authorizatio
   await f.runtime.connection("session", f.host.id, false);
   await f.runtime.save({ id: f.host.id, name: f.host.name, hostname: "changed.test", username: f.host.username, auth: f.host.auth });
   const env = { runtime: f.runtime, sessionId: "session", cwd: "/" };
-  await assert.rejects(executeTool("ssh_list_directory", { hostId: f.host.id }, env),
+  await assert.rejects(executeTool("ssh_read_file", { hostId: f.host.id, path: "fixture.txt" }, env),
     error => error instanceof Error && /ssh_reset_connection/.test(error.message));
   assert.equal(f.connections[0].alive, true);
   const result = await executeTool("ssh_reset_connection", { hostId: f.host.id }, env);

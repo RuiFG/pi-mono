@@ -10,6 +10,7 @@ import { executeTool, type ToolName } from "../src/tools.ts";
 import * as files from "../src/files.ts";
 import { SshError, type HostProfile } from "../src/domain.ts";
 import { sudoIdentity } from "../src/sudo.ts";
+import { quote } from "../src/paths.ts";
 import { CredentialDialogs, Dialogs } from "../src/ui.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -28,7 +29,7 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
     const initial = await run("ssh_set_workspace", {}); assert.equal(initial.directory, "/home/tester");
     await assert.rejects(run("ssh_set_workspace", { path: "/missing-directory" }));
     assert.equal(runtime.resolve("tools", host.id).directory, "/home/tester");
-    await run("ssh_mkdir", { path: "work/a", parents: true });
+    assert.equal((await run("ssh_shell_exec", { command: "mkdir -p -- work/a" })).ok, true);
     await run("ssh_set_workspace", { path: "work/a" });
     const output = await run("ssh_shell_exec", { command: "pwd; cd /tmp; pwd" });
     assert.equal(output.stdout, "/home/tester/work/a\n/tmp\n");
@@ -48,7 +49,7 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
   it("binary transfers stream 8 MiB, preserve conflicts, support Unicode and apostrophes", async () => {
     const bytes = randomBytes(8 * 1024 * 1024 + 3), source = path.join(temp.directory, "source.bin");
     await writeFile(source, bytes);
-    await run("ssh_mkdir", { path: "data ' Unicode-字" });
+    assert.equal((await run("ssh_shell_exec", { command: `mkdir -- ${quote("data ' Unicode-字")}` })).ok, true);
     const remote = "data ' Unicode-字/payload.bin";
     await run("ssh_upload_file", { localPath: source, remotePath: remote });
     await assert.rejects(run("ssh_upload_file", { localPath: source, remotePath: remote }), /exists/);
@@ -67,16 +68,17 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
     await assert.rejects(files.upload(connection, source, "/home/tester/work/a/" + remote, true, controller.signal, () => controller.abort()));
     assert.equal((await run("ssh_read_file", { path: remote })).content, "first\nsecond\nthird");
   });
-  it("glob, grep, move, listing and explicit recursive deletion work through tools", async () => {
-    await run("ssh_mkdir", { path: "project/src/nested", parents: true });
+  it("glob and grep work with directories managed through shell commands", async () => {
+    assert.equal((await run("ssh_shell_exec", { command: "mkdir -p -- project/src/nested" })).ok, true);
     await run("ssh_write_file", { path: "project/src/nested/a.ts", content: "hello\nMATCH me\n" });
     assert.deepEqual((await run("ssh_glob", { path: "project", pattern: "src/**/*.ts" })).files, ["src/nested/a.ts"]);
     const grep = await run("ssh_grep", { path: "project", pattern: "MATCH", include: "*.ts" });
     assert.equal((grep.matches as string[]).length, 1);
-    await run("ssh_move", { source: "project/src/nested/a.ts", destination: "project/src/nested/b.ts" });
-    assert.equal(((await run("ssh_list_directory", { path: "project/src/nested" })).entries as { name: string }[])[0].name, "b.ts");
-    await assert.rejects(run("ssh_delete", { path: "project" }));
-    await run("ssh_delete", { path: "project", recursive: true });
+    const renamed = await run("ssh_shell_exec", { command: "mv -- project/src/nested/a.ts project/src/nested/b.ts && ls -1 -- project/src/nested" });
+    assert.equal(renamed.ok, true); assert.equal(renamed.stdout, "b.ts\n");
+    assert.deepEqual((await run("ssh_glob", { path: "project", pattern: "src/**/*.ts" })).files, ["src/nested/b.ts"]);
+    const removed = await run("ssh_shell_exec", { command: "rm -r -- project && test ! -e project" });
+    assert.equal(removed.ok, true);
   });
   it("two hosts execute concurrently with no implicit current target", async () => {
     const second = await runtime.save({ name: "Parallel", hostname: "127.0.0.1", port: fixture.jump.port, username: "tester", auth: "password" }, "fixture-password", false);
@@ -158,7 +160,7 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
     const noSftp = await runtime.save({ name: "No SFTP", hostname: "127.0.0.1", port: fixture.noSftp.port, username: "tester", auth: "password" }, "fixture-password", false);
     const result = await runtime.test(noSftp.id); assert.equal(result.exec, true); assert.equal(result.sftp, false);
     assert.equal((await run("ssh_shell_exec", { hostId: noSftp.id, command: "printf working" })).stdout, "working");
-    await assert.rejects(run("ssh_list_directory", { hostId: noSftp.id }), /SFTP/);
+    await assert.rejects(run("ssh_glob", { hostId: noSftp.id, pattern: "*" }), /SFTP/);
   });
   it("network loss reconnects without replay; reset preserves the directory; active hosts cannot be removed", async () => {
     const old = await runtime.connection("tools", host.id, false); old.close();

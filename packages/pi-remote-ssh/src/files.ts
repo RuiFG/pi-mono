@@ -33,7 +33,7 @@ export async function remoteStat(sftp: SFTPWrapper, target: string, follow = fal
 }
 async function requireParent(sftp: SFTPWrapper, target: string, signal?: AbortSignal) {
   const info = await remoteStat(sftp, path.posix.dirname(target), true, signal);
-  if (!info?.isDirectory()) throw new SshError("PARENT_MISSING", "Destination parent directory does not exist; use ssh_mkdir");
+  if (!info?.isDirectory()) throw new SshError("PARENT_MISSING", "Destination parent directory does not exist; create it with ssh_shell_exec");
 }
 async function writable(sftp: SFTPWrapper, target: string, overwrite: boolean, signal?: AbortSignal) {
   const info = await remoteStat(sftp, target, false, signal);
@@ -103,7 +103,7 @@ export async function download(connection: Connection, source: string, destinati
     return { path: destination, bytes: transfer.bytes() };
   } finally { await localRm(temp, { force: true }); }
 }
-export async function listDirectory(connection: Connection, target: string, limit: number, signal?: AbortSignal) {
+async function listDirectory(connection: Connection, target: string, limit: number, signal?: AbortSignal) {
   const sftp = await connection.sftp(signal);
   const handle = await sftpCall<Buffer>(cb => sftp.opendir(target, cb), signal);
   const entries: { name: string; type: string; size: number; modified: number }[] = [];
@@ -168,46 +168,6 @@ export async function readText(connection: Connection, target: string, start: nu
     if (!truncated && pending) take(pending + decoder.end());
   } finally { signal?.removeEventListener("abort", abort); stream.destroy(); }
   return { path: target, start, lines: lines.length, content: lines.join("\n"), truncated };
-}
-export async function mkdir(connection: Connection, target: string, parents: boolean, signal?: AbortSignal) {
-  const sftp = await connection.sftp(signal);
-  const parts = parents ? target.split("/").filter(Boolean).map((_v, i, all) => "/" + all.slice(0, i + 1).join("/")) : [target];
-  for (const part of parts) {
-    checkAbort(signal);
-    const info = await remoteStat(sftp, part, true, signal);
-    if (info?.isDirectory()) continue;
-    if (info) throw new SshError("DESTINATION_EXISTS", `A non-directory exists at ${part}`);
-    await sftpCall<void>(cb => sftp.mkdir(part, { mode: 0o755 }, cb), signal);
-  }
-  return { path: target };
-}
-export async function remove(connection: Connection, target: string, recursive: boolean, signal?: AbortSignal) {
-  const sftp = await connection.sftp(signal);
-  const visit = async (item: string, depth: number): Promise<void> => {
-    checkAbort(signal);
-    if (depth > 128) throw new SshError("DEPTH_LIMIT", "Directory depth exceeds operation limit");
-    const info = await remoteStat(sftp, item, false, signal);
-    if (!info) throw new SshError("NOT_FOUND", `Remote path does not exist: ${item}`);
-    if (!info.isDirectory()) { await sftpCall<void>(cb => sftp.unlink(item, cb), signal); return; }
-    if (recursive) {
-      const children = await listDirectory(connection, item, 100_000, signal);
-      if (children.truncated) throw new SshError("DIRECTORY_TOO_LARGE", "Directory exceeds recursive operation limit");
-      for (const child of children.entries) await visit(path.posix.join(item, child.name), depth + 1);
-    }
-    await sftpCall<void>(cb => sftp.rmdir(item, cb), signal);
-  };
-  await visit(target, 0);
-  return { path: target };
-}
-export async function move(connection: Connection, source: string, destination: string, overwrite: boolean, signal?: AbortSignal) {
-  const sftp = await connection.sftp(signal);
-  checkAbort(signal);
-  if (!await remoteStat(sftp, source, false, signal)) throw new SshError("NOT_FOUND", `Source does not exist: ${source}`);
-  await requireParent(sftp, destination, signal);
-  const existing = await remoteStat(sftp, destination, false, signal);
-  if (existing && !overwrite) throw new SshError("DESTINATION_EXISTS", `Destination exists: ${destination}`);
-  await publish(sftp, source, destination, overwrite, signal);
-  return { source, destination };
 }
 export async function glob(connection: Connection, root: string, pattern: string, limit: number, signal?: AbortSignal) {
   const matcher = new Minimatch(pattern, { dot: true, matchBase: !pattern.includes("/") });

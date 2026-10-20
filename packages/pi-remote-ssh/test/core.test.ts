@@ -125,11 +125,18 @@ test("password input masks typing/paste, handles Unicode backspace and clearing,
   cancel.handleInput("secret"); cancel.handleInput("\x1b"); assert.equal(result, undefined);
 });
 
-test("all 14 tools register English descriptions, explicit schemas, hints and bounded error results", () => {
+test("all 10 tools register English descriptions, explicit schemas, hints and bounded error results", () => {
   const tools: ToolDefinition[] = [];
   const pi = { registerTool: (tool: ToolDefinition) => tools.push(tool) } as unknown as ExtensionAPI;
   registerTools(pi, async () => { throw new Error("unused"); });
-  assert.equal(tools.length, 14);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), [
+    "ssh_list_hosts", "ssh_set_workspace", "ssh_shell_exec", "ssh_read_file", "ssh_write_file",
+    "ssh_grep", "ssh_glob", "ssh_upload_file", "ssh_download_file", "ssh_reset_connection",
+  ].sort());
+  for (const removed of ["ssh_mkdir", "ssh_delete", "ssh_move", "ssh_list_directory"]) {
+    assert.ok(!Object.hasOwn(schemas, removed));
+    assert.ok(!tools.some(tool => tool.name === removed));
+  }
   for (const tool of tools) {
     assert.ok(!/[\u4e00-\u9fff]/.test(tool.description));
     assert.equal(tool.annotations?.readOnlyHint, READ_ONLY.has(tool.name as keyof typeof schemas));
