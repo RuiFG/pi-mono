@@ -51,7 +51,7 @@ export class CredentialDialogs {
   private async answer(request: CredentialRequest, signal: AbortSignal) {
     const ctx = this.context();
     if (!ctx || ctx.mode !== "tui") { await this.runtime.replyCredential(request.id); return; }
-    if (request.temporaryOnly && !await this.dialogs.confirm(ctx)("Use a temporary sudo credential?", "The remembered sudo credential could not be read or removed. Enter a replacement for this runtime only? The old stored credential will be kept; use Clear sudo credential after the vault becomes available to remove it.", signal)) {
+    if (request.temporaryOnly && !await this.dialogs.confirm(ctx)("Use a temporary sudo credential?", "The remembered sudo credential could not be read or removed. Enter a replacement for this runtime only? The old stored credential reference will be kept, and the temporary replacement will be discarded when this runtime ends.", signal)) {
       await this.runtime.replyCredential(request.id); return;
     }
     let reuse = false;
@@ -62,7 +62,7 @@ export class CredentialDialogs {
     }
     const value = reuse ? undefined : await this.dialogs.password(ctx, `${request.retry ? "Authentication failed. Retry: " : ""}${request.kind === "sudo" ? "Sudo password" : request.kind === "passphrase" ? "Private key passphrase" : "SSH password"} for ${display(request.hostName)}`, signal);
     if (value === undefined && !reuse) { await this.runtime.replyCredential(request.id); return; }
-    const remember = !request.temporaryOnly && await this.dialogs.confirm(ctx)("Remember credential?", "Save in the operating system credential store? Choose No to keep it only until this extension runtime ends.", signal);
+    const remember = !request.temporaryOnly && await this.dialogs.confirm(ctx)("Remember credential?", "Save to an encrypted file on this computer? The key is stored locally; anyone with both files can decrypt it. Choose No to keep the credential only until this extension runtime ends.", signal);
     checkAbort(signal);
     try { await this.runtime.replyCredential(request.id, value, remember, reuse); }
     catch (error) {
@@ -99,7 +99,7 @@ async function draftHost(ctx: ExtensionContext, dialogs: Dialogs, runtime: Remot
 async function setLoginCredential(ctx: ExtensionContext, dialogs: Dialogs, runtime: RemoteRuntime, host: HostProfile) {
   const value = await dialogs.password(ctx, `${host.auth === "password" ? "SSH password" : "Private key passphrase"} for ${display(host.name)}`);
   if (value === undefined) return;
-  const remember = await dialogs.confirm(ctx)("Remember credential?", "Save in the operating system credential store? Choose No for memory-only storage.");
+  const remember = await dialogs.confirm(ctx)("Remember credential?", "Save to an encrypted file on this computer? The key is stored locally; anyone with both files can decrypt it. Choose No for memory-only storage.");
   const { revision: _revision, credentialId: _credential, remembered: _remembered, ...draft } = host;
   try { await runtime.save(draft, value, remember); }
   catch (error) {
@@ -115,10 +115,9 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, pe
     await runtime.profiles.load();
     const states = runtime.state(sessionId).hosts;
     const labels = states.map(({ host, status, directory, changed }) => `${display(host.name)} | ${status}${changed ? " (reconnect required)" : ""} | ${display(directory ?? "~")} [${host.id}]`);
-    const selected = await dialogs.select(ctx, "Remote SSH", ["Add host", ...labels, "Revoke session permissions", "Close"]);
+    const selected = await dialogs.select(ctx, "Remote SSH", ["Add host", ...labels, "Close"]);
     if (!selected || selected === "Close") return;
     try {
-      if (selected === "Revoke session permissions") { permissions.revoke(sessionId); ctx.ui.notify("SSH session permissions revoked", "info"); continue; }
       if (selected === "Add host") {
         const draft = await draftHost(ctx, dialogs, runtime);
         if (draft) {
@@ -129,33 +128,24 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, pe
         continue;
       }
       const { host, status, directory, changed, sftp, error } = states[labels.indexOf(selected)];
-      const action = await dialogs.select(ctx, `${display(host.name)} | ${status} | SFTP: ${sftp === undefined ? "not tested" : sftp ? "available" : "unavailable"}${changed ? " | reconnect required" : ""}${directory ? ` | ${display(directory)}` : ""}${error ? ` | ${display(error)}` : ""}`, ["Connect", "Test connection", "Disconnect", "Edit host", "Set login credential", "Authorize this session", "Clear sudo credential", "Reset host key trust", "Delete host", "Back"]);
+      const action = await dialogs.select(ctx, `${display(host.name)} | ${status} | SFTP: ${sftp === undefined ? "not tested" : sftp ? "available" : "unavailable"}${changed ? " | reconnect required" : ""}${directory ? ` | ${display(directory)}` : ""}${error ? ` | ${display(error)}` : ""}`, ["Test connection", "Edit host", "Set login credential", "Delete host", "Back"]);
       switch (action) {
-        case "Connect":
-          if (changed) await runtime.disconnect(sessionId, host.id);
-          await runtime.setWorkspace(sessionId, host.id, undefined, dialogs.signal());
-          ctx.ui.notify("SSH connection ready", "info"); break;
         case "Test connection": {
           ctx.ui.notify("Testing SSH and SFTP...", "info");
           const result = await runtime.test(host.id, dialogs.signal());
           ctx.ui.notify(`SSH: available | SFTP: ${result.sftp ? "available" : "unavailable"} | Home: ${display(result.home)}`, result.sftp ? "info" : "warning"); break;
         }
-        case "Disconnect": await runtime.disconnect(sessionId, host.id); break;
         case "Edit host": {
           const draft = await draftHost(ctx, dialogs, runtime, host);
-          if (draft) { await runtime.save(draft); permissions.revoke(sessionId); ctx.ui.notify("Host saved. Connection changes require reconnecting.", "info"); }
+          if (draft) { await runtime.save(draft); permissions.revoke(sessionId); ctx.ui.notify("Host saved. Use ssh_reset_connection to apply changes to an existing connection.", "info"); }
           break;
         }
         case "Set login credential": await setLoginCredential(ctx, dialogs, runtime, host); break;
-        case "Authorize this session": await permissions.authorize(sessionId, runtime.profiles.chain(host.id), dialogs.confirm(ctx), dialogs.signal()); break;
-        case "Clear sudo credential":
-          if (await dialogs.confirm(ctx)("Clear sudo credential?", "Remove this plugin's cached and remembered sudo credential? Remote sudo timestamps are not changed.")) await runtime.sudoCredentials.remove(host.id);
-          break;
-        case "Reset host key trust":
-          if (await dialogs.confirm(ctx)("Reset server identity trust?", `Verify ${display(host.hostname)}:${host.port} out of band first. The next connection will trust the presented key. Disconnect all uses of this endpoint, including jump hosts, before proceeding.`)) { await runtime.forgetHostKey(host.id); permissions.clear(); }
-          break;
         case "Delete host":
-          if (await dialogs.confirm(ctx)("Delete host?", `Remove ${display(host.name)} and its stored credentials? Disconnect it first.`)) { await runtime.deleteHost(host.id); permissions.clear(); }
+          if (await dialogs.confirm(ctx)("Delete host?", `Remove ${display(host.name)} and its stored credentials? Its connection in this session will be closed. Deletion is blocked if another connection still uses this host.`)) {
+            await runtime.disconnect(sessionId, host.id);
+            await runtime.deleteHost(host.id); permissions.clear();
+          }
           break;
       }
     } catch (error) { ctx.ui.notify(display(errorText(error)), "error"); }

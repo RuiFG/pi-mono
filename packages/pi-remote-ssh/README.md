@@ -56,9 +56,11 @@ Run `/ssh` without arguments in the interactive Pi terminal:
 3. Choose **Password** or **Private key**. Key paths are local paths.
 4. Choose an optional jump host. Save jump hosts first; each jump can reference another jump, up to 16 hosts in a route. Cycles are rejected.
 5. Optionally set a login credential now, or enter it when connecting.
-6. Select a host to connect, test SSH/SFTP, disconnect, edit, authorize, manage credentials, reset trust, or delete it.
+6. Select a host to **Test connection**, **Edit host**, **Set login credential**, or **Delete host**. Choose **Back** to return to the host list.
 
-The menu lists each host's state and working directory. Connection tests use a temporary connection and do not change the session's directory. Connection settings take effect after reconnecting; renaming preserves the stable host ID. Changing the login endpoint discards the old login credential reference so it is not sent to a different server.
+The menu lists each host's state and working directory. Tools connect automatically on first use; there are no manual connection or authorization buttons. Connection tests use a temporary connection and do not change the session's directory. Use `ssh_reset_connection` to apply configuration changes to an existing connection; renaming preserves the stable host ID. Changing the login endpoint discards the old login credential reference so it is not sent to a different server.
+
+Deleting a host requires confirmation and closes its connection in the current session before removal. Deletion remains blocked if another connection uses it or another configured host references it as a jump host.
 
 Use **Set login credential** to replace a password or passphrase. Password fields are masked and support typing, paste, Unicode backspace, Enter, Esc, and Ctrl+U. Never enter secrets into the conversation, `/ssh` arguments, tool parameters, or shell command text.
 
@@ -70,7 +72,7 @@ Before the first shell command, remote file mutation, transfer, or connection re
 - Uploads and downloads require separate confirmation of the local path and transfer direction for **each call**. Local paths are canonicalized before confirmation.
 - Read and search tools can connect without a mutation grant; connection does not imply mutation authorization.
 - Grants are memory-only, bound to the host's connection identity and route, and are not copied into a fork or another process.
-- Use **Revoke session permissions** to revoke grants. Session replacement, tree navigation, reload, and shutdown also clear them. Revocation does not undo or terminate an operation that has already started.
+- Session replacement, tree navigation, reload, and shutdown clear grants. Reload Pi or start a new session to request fresh authorization. Revocation does not undo or terminate an operation that has already started.
 - Without an interactive approval channel and an existing grant, mutations fail closed. Masked credential entry requires the terminal UI; it is not forwarded through ordinary RPC text input.
 
 Pi's tool annotations describe read-only and destructive operations for other extensions. They are not an OpenCode-style Plan/Explore policy or a security sandbox. This plugin does not infer an agent's role from its name, and it does not replace local Pi tools. A remote shell command can perform any action permitted by the remote account after authorization. The separate sudo confirmation applies to the structured `sudo: true` option; it cannot prevent escalation embedded inside arbitrary shell code. Enforce privilege restrictions on the server if that is required.
@@ -127,9 +129,9 @@ Results distinguish `outcome: "exited"` from `outcome: "unknown"`. A lost connec
 
 With `sudo: true`, the entire command runs through `sudo -u root -- sh`, including redirection and pipelines. The server must allow a root shell. TTY-only sudo and OTP are not supported. The password is requested separately and is never part of command arguments or tool results. Command `stdin` is sent only after authentication succeeds. An incorrect password may be retried inside the same sudo authentication process; the command is never replayed for authentication.
 
-Sudo credentials are separate from SSH credentials. The user may explicitly choose to copy the host's SSH password for sudo. **Clear sudo credential** removes the plugin's cached/remembered sudo credential, not the server's own sudo timestamp.
+Sudo credentials are separate from SSH credentials. The user may explicitly choose to copy the host's SSH password for sudo. Temporary credentials are discarded when the extension runtime ends. Removing a saved host also removes its stored sudo credential when the vault is available; the plugin does not manage the server's own sudo timestamp.
 
-If a remembered sudo credential cannot be read or removed because the system vault is unavailable, the terminal asks **Use a temporary sudo credential?** before requesting a replacement. Accepting keeps the replacement in memory for this runtime only, bound to the same host and connection identity; it does not overwrite the saved credential reference. Declining, cancelling, or running without the terminal fails closed. Once the vault is usable again, choose **Clear sudo credential** to remove the old stored credential. Clearing drops the runtime replacement even if deleting the stored credential still fails, and reports that failure rather than claiming successful deletion. Vault cleanup failures do not replace command outcomes or cancellation errors.
+If a remembered sudo credential cannot be read or removed because the encrypted credential file is unavailable or damaged, the terminal asks **Use a temporary sudo credential?** before requesting a replacement. Accepting keeps the replacement in memory for this runtime only, bound to the same host and connection identity; it does not overwrite the saved credential reference. The saved reference remains after the temporary replacement expires. Declining, cancelling, or running without the terminal fails closed. Vault cleanup failures do not replace command outcomes or cancellation errors.
 
 ## State and credentials
 
@@ -140,24 +142,30 @@ Default data directory:
   hosts.json
   known-hosts.json
   sudo-credentials.json
-  credentials/           # Windows DPAPI ciphertext only
+  credentials/
+    key                  # Random 32-byte local auto-unlock key; protect this file
+    vault.json           # AES-256-GCM encrypted credentials
 ```
 
-`PI_REMOTE_SSH_DATA_DIR` overrides the directory. Otherwise `XDG_DATA_HOME` is respected. JSON files contain host data and credential references, never passwords or passphrases. Writes are atomic; profile and trust updates use file locks to avoid lost updates between processes. Other processes reload profiles before tool operations. Active-use checks are local to each runtime, not a cross-process connection registry.
+`PI_REMOTE_SSH_DATA_DIR` overrides the directory. Otherwise `XDG_DATA_HOME` is respected. Profile/trust JSON files contain host data and credential references, never passwords or passphrases. Writes are atomic; profile, trust, and encrypted credential updates use file locks to avoid lost updates between processes. Other processes reload profiles before tool operations. Active-use checks are local to each runtime, not a cross-process connection registry.
 
-Remembering a credential is opt-in:
+**Windows, macOS, and Linux/WSL all use the same encrypted-file backend.** No DPAPI, Keychain, Secret Service, native credential-store binding, or master-password prompt is required. Remembering a credential remains opt-in; choosing No keeps it only in runtime memory.
 
-- **Windows:** user-scoped DPAPI via system Windows PowerShell. Secret bytes travel over stdin, not command-line arguments or environment variables.
-- **macOS:** system Keychain through the optional `@napi-rs/keyring` binding.
-- **Linux/WSL:** Secret Service through the same optional binding. There is no fallback to a nonpersistent kernel keyring. Headless WSL installations may have no usable credential store.
+- AES-256-GCM encrypts the credential map with a random 256-bit key and a fresh 96-bit nonce for each write. Authentication is checked before credentials are read; malformed or tampered data fails closed.
+- The key is generated once and stored separately in `credentials/key`, allowing automatic unlock. **Anyone who obtains both the key and the vault can decrypt the credentials.** This does not protect against malicious code running as the same user or a complete copy of the data directory. It is not equivalent to OS-protected storage or a user-supplied master password.
+- On Linux/macOS the credential directory is restricted to `0700` and files to `0600`; credential files with broader permissions are rejected. Use a filesystem that supports these permissions, especially in WSL. On Windows, keep the data directory under a private user profile and protect it with NTFS ACLs; POSIX mode bits do not enforce Windows ACLs.
+- Back up and restore `key` and `vault.json` together, as sensitive material. Never commit, share, or print either file. If the key is missing while a vault exists, the plugin does not generate a replacement or overwrite the old vault. Lost keys cannot recover existing credentials; restore a matching backup or deliberately reset the credential files and re-enter credentials.
+- The encrypted vault is limited to 4 MiB and each credential to 64 KiB. The plugin does not store plaintext credentials or install background services.
 
-When a vault is unavailable or locked, saving fails visibly. The user can explicitly choose temporary memory-only use instead; the plugin never falls back to plaintext. Temporary credentials are cleared when this extension runtime ends, including reload or session replacement. Private-key files remain at their original local paths.
+If encrypted storage is unwritable, insecurely permissioned, or damaged, saving fails visibly. The user can explicitly choose temporary memory-only use instead; there is no plaintext fallback. Temporary credentials are cleared when this extension runtime ends, including reload or session replacement. Private-key files remain at their original local paths.
+
+**Upgrading from the system-store backend in 0.1.0:** host profiles and IDs remain usable, but saved system credentials are not automatically imported. Re-enter SSH credentials through **Set login credential**, and sudo credentials when prompted. Previous OS-store entries and legacy `.dpapi` files are not read or deleted by this backend; remove them manually only after verifying the new saved credentials.
 
 Server fingerprints use **trust on first use (accept-new)** for each endpoint and jump. The first key is recorded automatically; later mismatches fail. This does not authenticate the first connection against a trusted external fingerprint. Verify identity out of band before resetting a trust record.
 
 Connections and working directories are not persisted. A new Pi runtime/session starts disconnected at the remote home on first use. Independent subagent processes do **not** inherit connections, directory snapshots, temporary credentials, or approvals; explicitly set their host directories. This differs from the reference application's shared background-service model.
 
-Manual disconnect prevents ordinary tools from reconnecting that host. Use **Connect** or `ssh_set_workspace` explicitly. Unexpected network loss permits a later operation to reconnect and revalidate the previous directory, but never replays the interrupted operation.
+Unexpected network loss permits a later operation to reconnect and revalidate the previous directory, but never replays the interrupted operation. `ssh_reset_connection` explicitly resets a host's connection without replaying commands.
 
 ## Development and validation
 
@@ -174,8 +182,8 @@ npm run test:native-tui --workspace pi-remote-ssh
 
 - `check`: strict TypeScript checking plus unit, authorization, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
 - `test:integration`: requires Docker; creates isolated Linux OpenSSH servers and jump hosts on loopback ports, then removes its containers/network/test image and temporary data. Includes real sudo authentication and wrong-password retry while a fixture vault rejects reads and deletes. No production host or model provider is used.
-- `test:package`: packs into a temporary directory, installs only package runtime dependencies in an isolated consumer (without the optional vault binding), and validates loading through Pi's real extension loader and SDK. No model call is made.
-- `test:sdk`: directly validates source loading, 14 tools, the host wizard, masked credential input, and denied execution through Pi's real SDK with scripted UI responses.
+- `test:package`: packs into a temporary directory, installs only package runtime dependencies in an isolated consumer with no OS credential-store binding, and validates Pi loading and remembered encrypted credentials. No model call is made.
+- `test:sdk`: directly validates source loading, 14 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and denied execution through Pi's real SDK with scripted UI responses.
 - `test:native-tui`: launches the real Pi CLI in an isolated Unix pseudo-terminal with no model credentials; exercises `/ssh`, the host wizard, and masked password entry, asserting plaintext never appears in terminal output or host configuration.
 
-Linux/WSL validation does not prove Windows/macOS native UI or vault compatibility. Platform-specific tests must run on those platforms before claiming production support there.
+Linux/WSL validation does not prove Windows/macOS native UI or filesystem behavior. Platform-specific tests must run on those platforms before claiming production support there.

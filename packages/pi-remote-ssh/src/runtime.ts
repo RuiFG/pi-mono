@@ -2,7 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Profiles, HostKeys } from "./storage.ts";
-import { Credentials, SystemSecrets, type SecretBackend } from "./credentials.ts";
+import { Credentials, EncryptedFileSecrets, type SecretBackend } from "./credentials.ts";
 import { Connector, type Connection, type ExecOptions } from "./transport.ts";
 import { SudoCredentials, sudoIdentity } from "./sudo.ts";
 import { Serial, SshError, checkAbort, type HostDraft, type HostProfile, type HostStatus } from "./domain.ts";
@@ -29,7 +29,7 @@ export class RemoteRuntime {
   constructor(directory: string, secrets?: SecretBackend, connector?: Connector) {
     this.profiles = new Profiles(path.join(directory, "hosts.json"));
     this.keys = new HostKeys(path.join(directory, "known-hosts.json"));
-    this.credentials = new Credentials(secrets ?? new SystemSecrets(path.join(directory, "credentials")));
+    this.credentials = new Credentials(secrets ?? new EncryptedFileSecrets(path.join(directory, "credentials")));
     this.sudoCredentials = new SudoCredentials(path.join(directory, "sudo-credentials.json"), this.credentials);
     this.connector = connector ?? new Connector(this.keys);
     this.events.setMaxListeners(0);
@@ -245,7 +245,7 @@ export class RemoteRuntime {
   async connection(id: string, hostId: string, explicit: boolean, signal?: AbortSignal): Promise<Connection> {
     const state = this.session(id);
     if (explicit) state.blocked.delete(hostId);
-    if (state.blocked.has(hostId)) throw new SshError("MANUALLY_DISCONNECTED", "This host was explicitly disconnected; use ssh_set_workspace or Connect in /ssh");
+    if (state.blocked.has(hostId)) throw new SshError("MANUALLY_DISCONNECTED", "This host was explicitly disconnected; use ssh_set_workspace to reconnect");
     const previous = state.slots.get(hostId);
     if (previous?.connection?.alive) return previous.connection;
     if (previous?.pending) return previous.pending;

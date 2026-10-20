@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { temporary } from "./helpers.ts";
 
-export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts", import.meta.url)), expectVaultUnavailable = false) {
+export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts", import.meta.url))) {
   const temp = await temporary();
   const previous = process.env.PI_REMOTE_SSH_DATA_DIR;
   process.env.PI_REMOTE_SSH_DATA_DIR = path.join(temp.directory, "ssh-data");
@@ -22,12 +22,13 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     const select = ["Add host", "Password", "None", "Close"];
     const input = ["Smoke host", "example.test", "22", "tester"];
     const notifications: string[] = [];
-    // In an isolated package without the optional vault: remember fails, then explicitly choose temporary use.
-    const confirmations = expectVaultUnavailable ? [true, true, true] : [true, false];
+    // Saving must work even in an isolated installation with no OS credential service or binding.
+    const confirmations = [true, true];
+    const confirmationTitles: string[] = [];
     const secret = "sdk-fixture-secret";
     const ui = {
       select: async (title: string, choices: string[]) => { const answer = select.shift(); assert.ok(answer && choices.includes(answer), `${title}: unexpected choice ${answer}`); return answer; },
-      input: async () => input.shift(), confirm: async () => confirmations.shift() ?? false,
+      input: async () => input.shift(), confirm: async (title: string) => { confirmationTitles.push(title); return confirmations.shift() ?? false; },
       custom: async (factory: (tui: { requestRender(): void }, theme: unknown, keys: unknown, done: (value: string | undefined) => void) => { handleInput(data: string): void; render(width: number): string[]; dispose(): void }) => {
         let value: string | undefined;
         const component = factory({ requestRender() {} }, undefined, undefined, result => { value = result; });
@@ -43,20 +44,25 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     await session.prompt("/ssh");
     assert.equal(select.length, 0); assert.equal(input.length, 0); assert.equal(confirmations.length, 0);
     assert.ok(notifications.includes("Host saved"));
+    assert.deepEqual(confirmationTitles, ["Set login credential now?", "Remember credential?"]);
     const tools = session.agent.state.tools;
     const listed = await tools.find(tool => tool.name === "ssh_list_hosts")!.execute("list", {}, undefined);
     assert.ok(JSON.stringify(listed).includes("Smoke host"));
     assert.ok(!JSON.stringify(listed).includes("credentialId"));
     assert.ok(!JSON.stringify(listed).includes(secret));
     assert.ok(!(await readFile(path.join(temp.directory, "ssh-data", "hosts.json"), "utf8")).includes(secret));
-    const profiles = JSON.parse(await readFile(path.join(temp.directory, "ssh-data", "hosts.json"), "utf8")) as { id: string; remembered: boolean }[];
-    assert.equal(profiles[0].remembered, false);
+    const profiles = JSON.parse(await readFile(path.join(temp.directory, "ssh-data", "hosts.json"), "utf8")) as { id: string; credentialId: string; remembered: boolean }[];
+    assert.equal(profiles[0].remembered, true);
+    const directory = path.join(temp.directory, "ssh-data", "credentials");
+    assert.ok(!(await readFile(path.join(directory, "vault.json"), "utf8")).includes(secret));
+    const { EncryptedFileSecrets } = await import(pathToFileURL(path.join(path.dirname(extensionPath), "src/credentials.ts")).href);
+    assert.equal(await new EncryptedFileSecrets(directory).get(profiles[0].credentialId), secret);
     const rejected = await tools.find(tool => tool.name === "ssh_shell_exec")!.execute("deny", { hostId: profiles[0].id, command: "id" }, undefined);
     assert.equal(rejected.isError, true);
     assert.ok(JSON.stringify(rejected).includes("PERMISSION_DENIED"));
     assert.deepEqual(errors, []);
     assert.equal(session.messages.length, 0, "Host configuration and credentials must not enter the conversation");
-    console.log("PASS: real Pi loader, 14 registered tools, /ssh host wizard, tool dispatch, denied mutation, no model requests");
+    console.log("PASS: real Pi loader, 14 tools, /ssh wizard, encrypted credential persistence without OS vault or fallback, denied mutation, no model requests");
   } finally {
     if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); }
     if (previous === undefined) delete process.env.PI_REMOTE_SSH_DATA_DIR; else process.env.PI_REMOTE_SSH_DATA_DIR = previous;

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { Profiles, HostKeys } from "../src/storage.ts";
-import { Credentials, SystemSecrets } from "../src/credentials.ts";
+import { Credentials } from "../src/credentials.ts";
 import { RemoteRuntime } from "../src/runtime.ts";
 import { remotePath, quote } from "../src/paths.ts";
 import { Permissions } from "../src/permissions.ts";
@@ -146,14 +146,4 @@ test("credential requests fail promptly without an interactive terminal", async 
   const host = await runtime.save(draft);
   await assert.rejects(runtime.connection("s", host.id, true), /cancelled/);
   assert.equal(runtime.state().requests.length, 0);
-});
-
-test("Windows DPAPI stores ciphertext and decrypts only through the vault", { skip: process.platform !== "win32" }, async t => {
-  const temp = await temporary(); t.after(temp.close);
-  const vault = new SystemSecrets(temp.directory), credentials = new Credentials(vault);
-  const value = "fixture-only-private-value";
-  const ref = await credentials.create(value, true);
-  t.after(() => credentials.remove(ref.id, true));
-  assert.ok(!(await readFile(path.join(temp.directory, `${ref.id}.dpapi`))).includes(Buffer.from(value)));
-  assert.equal(await new Credentials(vault).get(ref.id, true), value);
 });

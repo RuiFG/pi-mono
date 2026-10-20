@@ -94,7 +94,7 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
   if (identity !== sudoIdentity(runtime.profiles.chain(selected.host.id))) throw new SshError("HOST_CHANGED", "Host configuration changed during approval; retry the operation");
   if (name === "ssh_reset_connection") return { ok: true, ...await runtime.reset(sessionId, selected.host.id, signal) };
   const status = runtime.state(sessionId).hosts.find(item => item.host.id === selected.host.id);
-  if (status?.changed) throw new SshError("HOST_CHANGED", "Disconnect and reconnect this host in /ssh to use its updated configuration");
+  if (status?.changed) throw new SshError("HOST_CHANGED", "Use ssh_reset_connection for this host to apply its updated configuration");
   const connection = await runtime.connection(sessionId, selected.host.id, name === "ssh_set_workspace", signal);
   if (sudoIdentity(connection.chain) !== identity) throw new SshError("HOST_CHANGED", "Connection identity no longer matches the approved host");
   checkAbort(signal);

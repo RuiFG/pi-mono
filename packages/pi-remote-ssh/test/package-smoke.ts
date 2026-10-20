@@ -27,6 +27,6 @@ try {
   await npm(["install", path.join(temp.directory, packed[0].filename), "--omit=dev", "--omit=optional", "--legacy-peer-deps", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"], consumer);
   await assert.rejects(access(path.join(consumer, "node_modules/@earendil-works/pi-coding-agent")), { code: "ENOENT" });
   await assert.rejects(access(path.join(consumer, "node_modules/@napi-rs/keyring")), { code: "ENOENT" });
-  await smoke(path.join(consumer, "node_modules/pi-remote-ssh/index.ts"), process.platform !== "win32");
-  console.log(`PASS: isolated packed installation (${files.length} files), runtime dependencies only, host peers not bundled, optional vault absent`);
+  await smoke(path.join(consumer, "node_modules/pi-remote-ssh/index.ts"));
+  console.log(`PASS: isolated packed installation (${files.length} files), runtime dependencies only, host peers not bundled, no OS credential-store dependency`);
 } finally { await temp.close(); }

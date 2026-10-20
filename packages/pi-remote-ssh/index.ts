@@ -33,7 +33,7 @@ export default function remoteSsh(pi: ExtensionAPI) {
 
   registerTools(pi, environment);
   pi.registerCommand("ssh", {
-    description: "Manage SSH hosts, connections, credentials, and session permissions",
+    description: "Manage SSH hosts, test connections, and configure login credentials",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") { ctx.ui.notify("/ssh requires the interactive Pi terminal UI", "error"); return; }
       if (args.trim()) { ctx.ui.notify("Use /ssh without arguments. Never put credentials in command arguments.", "warning"); return; }
