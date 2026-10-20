@@ -32,7 +32,7 @@ async function fixture() {
   dialogs.password = async () => { passwords++; return answers.shift(); };
   let approve = true, headless = false, retry = false, unknown = false;
   const context = () => ({ mode: headless ? "print" : "tui", hasUI: !headless,
-    ui: { confirm: async (title: string) => { confirmations.push(title); return approve; } },
+    ui: { select: async (title: string) => { confirmations.push(title.split("\n")[0]); return approve ? "Yes" : "No"; } },
   }) as unknown as ExtensionContext;
   const bridge = new CredentialDialogs(runtime, dialogs, context);
   const connection = { chain: [host], exec: async (_command: string, options: ExecOptions) => {

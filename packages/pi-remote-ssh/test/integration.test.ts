@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { dockerFixture } from "./docker.ts";
@@ -103,6 +103,22 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
     assert.equal(large.truncated, true); assert.equal(large.stdout.length, 4096);
     assert.equal((await connection.exec("printf alive")).stdout, "alive");
   });
+  it("shell tools stream before exit and retain a readable full log for long output", async () => {
+    let finished = false, sawLiveOutput = false;
+    const result = await executeTool("ssh_shell_exec", { hostId: host.id, command: "printf 'begin\\n'; sleep 0.4; printf 'warning\\n' >&2; printf 'end\\n'; exit 7" }, {
+      runtime, sessionId: "streaming", cwd: temp.directory,
+      report: value => { if (String(value.displayOutput ?? "").includes("begin") && !finished) sawLiveOutput = true; },
+    });
+    finished = true;
+    assert.equal(sawLiveOutput, true); assert.equal(result.exitCode, 7); assert.equal(result.ok, false);
+    assert.equal(result.stdout, "begin\nend\n"); assert.equal(result.stderr, "warning\n");
+    assert.match(String(result.displayOutput), /begin/); assert.match(String(result.displayOutput), /warning/);
+    const large = await run("ssh_shell_exec", { command: "head -c 200000 /dev/zero | tr '\\000' x; printf TAIL" });
+    assert.equal(large.displayTruncated, true); assert.ok(String(large.displayOutput).endsWith("TAIL"));
+    const log = String(large.fullOutputPath);
+    try { assert.equal(await readFile(log, "utf8"), "x".repeat(200000) + "TAIL"); }
+    finally { assert.ok(path.basename(path.dirname(log)).startsWith("pi-remote-ssh-output-")); await rm(path.dirname(log), { recursive: true }); }
+  });
   it("sudo separates stdin, handles wrong-password retry, NOPASSWD and never replays a failed command", async () => {
     const connection = await runtime.connection("sudo", host.id, true);
     let prompts = 0;
@@ -136,7 +152,7 @@ describe("real Linux OpenSSH integration", { skip: process.env.PI_REMOTE_SSH_INT
       vault.set = async () => { throw new Error("Recovery must not persist the replacement"); };
       recovered = new RemoteRuntime(isolated.directory, vault); await recovered.load();
       const titles: string[] = [], passwords = ["wrong-fixture-password", "fixture-password"];
-      const ctx = { mode: "tui", hasUI: true, ui: { confirm: async (title: string) => { titles.push(title); return true; } } } as unknown as ExtensionContext;
+      const ctx = { mode: "tui", hasUI: true, ui: { select: async (title: string) => { titles.push(title.split("\n")[0]); return "Yes"; } } } as unknown as ExtensionContext;
       dialogs.password = async () => passwords.shift();
       bridge = new CredentialDialogs(recovered, dialogs, () => ctx);
       const marker = `/tmp/pi-vault-recovery-${key.id}`;

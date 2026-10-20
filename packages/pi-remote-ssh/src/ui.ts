@@ -1,25 +1,88 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CancellableLoader, Text, type OverlayHandle } from "@earendil-works/pi-tui";
 import { Serial, SshError, errorText, checkAbort, type HostDraft, type HostProfile } from "./domain.ts";
 import { RemoteRuntime, type CredentialRequest } from "./runtime.ts";
 import { display, type Confirm } from "./permissions.ts";
 import { localPath } from "./paths.ts";
 import { password, sudoPassword } from "./password.ts";
 
+function isCancellation(error: unknown) {
+  return error instanceof SshError && ["CANCELLED", "CREDENTIAL_CANCELLED"].includes(error.code)
+    || error instanceof Error && error.name === "AbortError";
+}
+
 /** One queue for dialogs only; never hold it while waiting on an SSH operation. */
 export class Dialogs {
   private serial = new Serial();
   private lifetime = new AbortController();
+  private activeDialogs = 0;
+  private progressOverlays = new Set<OverlayHandle>();
   close() { this.lifetime.abort(); }
   signal(signal?: AbortSignal) { return signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal; }
   async run<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const combined = this.signal(signal);
-    return this.serial.run(async () => { checkAbort(combined); const result = await operation(combined); checkAbort(combined); return result; });
+    this.activeDialogs++;
+    for (const overlay of this.progressOverlays) overlay.setHidden(true);
+    try {
+      return await this.serial.run(async () => { checkAbort(combined); const result = await operation(combined); checkAbort(combined); return result; });
+    } finally {
+      if (--this.activeDialogs === 0) for (const overlay of this.progressOverlays) overlay.setHidden(false);
+    }
   }
   confirm(ctx: ExtensionContext): Confirm {
-    return (title, message, signal) => this.run(combined => ctx.hasUI ? ctx.ui.confirm(title, message, { signal: combined }) : Promise.resolve(false), signal);
+    return (title, message, signal) => this.run(async combined => {
+      if (!ctx.hasUI) return false;
+      // A boolean confirm conflates Escape with No. Only an explicit No may
+      // continue with memory-only credentials; Escape must cancel the step.
+      const answer = await ctx.ui.select(`${title}\n${message}`, ["No", "Yes"], { signal: combined });
+      if (answer === undefined) throw new SshError("CANCELLED", "Operation cancelled");
+      return answer === "Yes";
+    }, signal);
   }
   select(ctx: ExtensionContext, title: string, choices: string[], signal?: AbortSignal) {
     return this.run(combined => ctx.ui.select(title, choices, { signal: combined }), signal);
+  }
+  async feedback(ctx: ExtensionContext, title: string, message: string) {
+    await this.select(ctx, `${title}\n${display(message)}`, ["Back"]);
+  }
+  async error(ctx: ExtensionContext, error: unknown) {
+    if (this.lifetime.signal.aborted || isCancellation(error)) return;
+    await this.feedback(ctx, "Remote SSH — Error", errorText(error));
+  }
+  async progress<T>(ctx: ExtensionContext, title: string, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    checkAbort(this.lifetime.signal);
+    let handle: OverlayHandle | undefined;
+    type Outcome = { ok: true; value: T } | { ok: false; error: unknown };
+    try {
+      // Never hold the dialog queue while connecting: authentication needs it.
+      const result = await ctx.ui.custom<Outcome>((tui, theme, _keys, done) => {
+        const loader = new CancellableLoader(tui, text => theme.fg("accent", text), text => theme.fg("muted", text), display(title));
+        const hint = new Text("Esc to cancel", 1, 0);
+        const controller = new AbortController();
+        const signal = AbortSignal.any([this.lifetime.signal, loader.signal, controller.signal]);
+        const finish = (outcome: Outcome) => { loader.dispose(); done(outcome); };
+        void Promise.resolve().then(() => { checkAbort(signal); return operation(signal); }).then(
+          value => { checkAbort(signal); return value; },
+        ).then(value => finish({ ok: true, value }), error => finish({ ok: false, error }));
+        return {
+          render: (width: number) => width <= 0 ? [] : [theme.fg("accent", "─".repeat(width)), ...loader.render(width), ...hint.render(width), theme.fg("accent", "─".repeat(width))],
+          handleInput: (data: string) => loader.handleInput(data),
+          invalidate: () => loader.invalidate(),
+          dispose: () => { controller.abort(); loader.dispose(); },
+        };
+      }, {
+        overlay: true,
+        overlayOptions: { anchor: "bottom-center", width: "100%" },
+        onHandle: overlay => {
+          handle = overlay; this.progressOverlays.add(overlay);
+          overlay.setHidden(this.activeDialogs > 0);
+        },
+      });
+      if (!result.ok) throw result.error;
+      return result.value;
+    } finally {
+      if (handle) this.progressOverlays.delete(handle);
+    }
   }
   input(ctx: ExtensionContext, title: string, previous?: string) {
     return this.run(signal => ctx.ui.input(previous ? `${title} (Enter to keep: ${display(previous)})` : title, previous, { signal }));
@@ -109,7 +172,6 @@ async function setLoginCredential(ctx: ExtensionContext, dialogs: Dialogs, runti
   catch (error) {
     if (!(error instanceof SshError) || error.code !== "VAULT_UNAVAILABLE" || !remember) throw error;
     if (await dialogs.confirm(ctx)("Credential store unavailable", "Use the credential for this runtime only instead?")) await runtime.save(draft, value, false);
-    else throw new SshError("CREDENTIAL_CANCELLED", "Credential was not saved");
   }
 }
 
@@ -118,7 +180,7 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, di
   while (true) {
     await runtime.profiles.load();
     const states = runtime.state(sessionId).hosts;
-    const labels = states.map(({ host, status, directory, changed }) => `${display(host.name)} | ${status}${changed ? " (reconnect required)" : ""} | ${display(directory ?? "~")} [${host.id}]`);
+    const labels = states.map(({ host, directory }) => `${display(host.name)} | ${display(directory ?? "~")} [${host.id}]`);
     const selected = await dialogs.select(ctx, "Remote SSH", ["Add host", ...labels, "Close"]);
     if (!selected || selected === "Close") return;
     try {
@@ -127,21 +189,19 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, di
         if (draft) {
           const host = await runtime.save(draft);
           if (await dialogs.confirm(ctx)("Set login credential now?", "Otherwise it will be requested when connecting. Unencrypted private keys need no passphrase.")) await setLoginCredential(ctx, dialogs, runtime, host);
-          ctx.ui.notify("Host saved", "info");
         }
         continue;
       }
-      const { host, status, directory, changed, sftp, error } = states[labels.indexOf(selected)];
-      const action = await dialogs.select(ctx, `${display(host.name)} | ${status} | SFTP: ${sftp === undefined ? "not tested" : sftp ? "available" : "unavailable"}${changed ? " | reconnect required" : ""}${directory ? ` | ${display(directory)}` : ""}${error ? ` | ${display(error)}` : ""}`, ["Test connection", "Edit host", "Set login credential", "Delete host", "Back"]);
+      const { host, directory } = states[labels.indexOf(selected)];
+      const action = await dialogs.select(ctx, `${display(host.name)} | ${display(directory ?? "~")}`, ["Test connection", "Edit host", "Set login credential", "Delete host", "Back"]);
       switch (action) {
         case "Test connection": {
-          ctx.ui.notify("Testing SSH and SFTP...", "info");
-          const result = await runtime.test(host.id, dialogs.signal());
-          ctx.ui.notify(`SSH: available | SFTP: ${result.sftp ? "available" : "unavailable"} | Home: ${display(result.home)}`, result.sftp ? "info" : "warning"); break;
+          const result = await dialogs.progress(ctx, `Testing ${display(host.name)}: SSH and SFTP...`, signal => runtime.test(host.id, signal));
+          await dialogs.feedback(ctx, "Connection test", `SSH: available | SFTP: ${result.sftp ? "available" : "unavailable"} | Home: ${display(result.home)}`); break;
         }
         case "Edit host": {
           const draft = await draftHost(ctx, dialogs, runtime, host);
-          if (draft) { await runtime.save(draft); ctx.ui.notify("Host saved. Use ssh_reset_connection to apply changes to an existing connection.", "info"); }
+          if (draft) await runtime.save(draft);
           break;
         }
         case "Set login credential": await setLoginCredential(ctx, dialogs, runtime, host); break;
@@ -152,6 +212,6 @@ export async function hostMenu(ctx: ExtensionContext, runtime: RemoteRuntime, di
           }
           break;
       }
-    } catch (error) { ctx.ui.notify(display(errorText(error)), "error"); }
+    } catch (error) { await dialogs.error(ctx, error); }
   }
 }

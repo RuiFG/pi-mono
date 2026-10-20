@@ -23,7 +23,7 @@ pi install npm:pi-remote-ssh
 To install this specific release:
 
 ```sh
-pi install npm:pi-remote-ssh@0.1.2
+pi install npm:pi-remote-ssh@0.1.3
 ```
 
 Restart Pi or reload its resources, then run `/ssh`. Pi loads the TypeScript entry directly; no separate build step is required.
@@ -58,7 +58,7 @@ Run `/ssh` without arguments in the interactive Pi terminal:
 5. Optionally set a login credential now, or enter it when connecting.
 6. Select a host to **Test connection**, **Edit host**, **Set login credential**, or **Delete host**. Choose **Back** to return to the host list.
 
-The menu lists each host's state and working directory. Tools connect automatically on first use; there are no manual connection or authorization buttons. Connection tests use a temporary connection and do not change the session's directory. Use `ssh_reset_connection` to apply configuration changes to an existing connection; renaming preserves the stable host ID. Changing the login endpoint discards the old login credential reference so it is not sent to a different server.
+The host list shows each host's name, working directory, and stable ID. Connection status and reconnect information are omitted from menu labels and titles; agents can inspect them through `ssh_list_hosts`. Explicit connection tests show temporary progress and results inside the menu; failed operations show a dismissible error there. Successful saves return to the updated list without global notifications. Escape silently cancels the current unfinished step, preserving earlier saves. For example, cancelling optional login setup does not delete a host that was just saved. In credential-storage confirmations, an explicit No permits memory-only storage; Escape cancels without replacing the credential. Tools connect automatically on first use; there are no manual connection or authorization buttons. Connection tests use a temporary connection and do not change the session's directory. Use `ssh_reset_connection` to apply configuration changes to an existing connection; renaming preserves the stable host ID. Changing the login endpoint discards the old login credential reference so it is not sent to a different server.
 
 Deleting a host requires confirmation and closes its connection in the current session before removal. Deletion remains blocked if another connection uses it or another configured host references it as a jump host.
 
@@ -115,9 +115,24 @@ Remote paths follow Linux rules. `~` and `~/` expand to the remote home; `~other
 - Remote file replacement uses the OpenSSH atomic rename extension where available; it never deletes the original first to emulate replacement.
 - Reads, searches, directory traversal, and tool output are bounded and report truncation. Request smaller ranges or fewer entries when output is truncated.
 
+### Tool display, streaming, and output logs
+
+All ten tools use Pi's native tool shell and public bash-renderer callbacks for themed pending/success/error backgrounds, live `Elapsed` time, final `Took` time, and expandable output. Colors come from the active theme, not fixed gray/blue values. Shell calls identify the remote host and show `$ command`, an optional sudo indicator, and the timeout; other tools show their own operation and relevant paths. File contents and command stdin are not shown in call headers.
+
+- `ssh_shell_exec` streams filtered stdout and stderr together in client-observed arrival order, using cumulative snapshots throttled to about 100 ms. Separate stdout/stderr fields remain available in final results. Sudo authentication markers and credentials are not part of this stream.
+- Collapsed output uses the native five-visual-line tail preview. Pi's expand action (Ctrl+O by default, respecting remapped keys) reveals the retained output. Expansion does **not** load a complete output log.
+- A nonzero exit code is shown explicitly; exit zero is not repeated as a status line. Timeout, cancellation, missing exit codes, and unknown remote outcomes remain distinct. A closed connection never implies successful execution or confirmed remote termination.
+- `Took` is Pi's tool-call duration, including connection or authentication waits inside the call, not pure remote-process runtime. Recorded duration survives interactive reload/resume. Old results or HTML exports without recorded duration omit it. Tools invoked inside codemode follow the parent tool's presentation rather than necessarily receiving a separate row.
+- The retained command display tail is bounded by 12 KiB, JSON-escaping safety, and 2,000 lines. Final tool JSON is additionally bounded; stdout/stderr retain bounded prefixes and may be shortened further, with `truncated: true`. Reads/searches remain bounded independently.
+- When command output exceeds the preview limits, the complete filtered textual stream is saved to a **local** OS-temporary `pi-remote-ssh-output-*/output.log`. The result includes `fullOutputPath`, and the UI shows `Full output:` outside the collapsed preview. Read this file with a local file tool, not `ssh_read_file`.
+- Log directories/files use `0700`/`0600` on POSIX. On Windows, protect the temporary directory with private user NTFS ACLs. Logs are not encrypted and may contain sensitive data printed by remote commands; this is separate from encrypted credential storage. They have no disk-size cap, are not deleted on completion/reload/exit, and have no plugin expiry job. The user or operating system must clean them up; they are not durable archives.
+- If logging fails, the result reports `outputLogError` and does not advertise an incomplete log as complete. Retained output and command outcome are still returned; the command is not retried. A failed write may leave a partial private file for manual cleanup.
+
+Rendering is validated against Pi 1.3.0 and uses public `createBashToolDefinition()` callbacks without importing private Pi modules or replacing the local bash executor.
+
 ### Commands, sudo, and cancellation
 
-Commands wait for a result, with a default timeout of 120 seconds. `timeoutMs: 0` disables the command timeout. Timeout and cancellation attempt to terminate the foreground command. Detached remote processes may continue.
+Commands stream output while waiting for a final result, with a default timeout of 120 seconds. `timeoutMs: 0` disables the command timeout. Timeout and cancellation attempt to terminate the foreground command. Detached remote processes may continue.
 
 Results distinguish `outcome: "exited"` from `outcome: "unknown"`. A lost connection or unconfirmed termination must **not** cause automatic replay. A nonzero exit status is a failed tool result.
 
@@ -174,10 +189,10 @@ npm run test:package --workspace pi-remote-ssh
 npm run test:native-tui --workspace pi-remote-ssh
 ```
 
-- `check`: strict TypeScript checking plus unit, direct-execution, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
-- `test:integration`: requires Docker; creates isolated Linux OpenSSH servers and jump hosts on loopback ports, then removes its containers/network/test image and temporary data. Includes real sudo authentication and wrong-password retry while a fixture vault rejects reads and deletes. No production host or model provider is used.
+- `check`: strict TypeScript checking plus unit, streaming, UTF-8, private-log, direct-execution, masking, storage, and schema tests. Docker integration is skipped unless explicitly enabled.
+- `test:integration`: requires Docker; creates isolated Linux OpenSSH servers and jump hosts on loopback ports, then removes its containers/network/test image and temporary data. Includes streaming before command exit, full-log integrity, real sudo authentication and wrong-password retry while a fixture vault rejects reads and deletes. No production host or model provider is used.
 - `test:package`: packs into a temporary directory, installs only package runtime dependencies in an isolated consumer with no OS credential-store binding, and validates Pi loading and remembered encrypted credentials. No model call is made.
-- `test:sdk`: directly validates source loading, 10 tools, the host wizard, masked credential input, encrypted credential persistence without a temporary-use fallback, and cancellation before connecting through Pi's real SDK with scripted UI responses.
-- `test:native-tui`: launches the real Pi CLI in an isolated Unix pseudo-terminal with no model credentials; exercises `/ssh`, the host wizard, and masked password entry, asserting plaintext never appears in terminal output or host configuration.
+- `test:sdk`: validates source loading, all ten tools and their real Pi renderers, theme changes, live/final timing, remapped expansion hints, narrow widths, restored duration, host setup, encrypted credential persistence, and cancellation. No model requests.
+- `test:native-tui`: launches the real Pi CLI in an isolated Unix pseudo-terminal with an offline synthetic tool transcript; verifies actual Ctrl+O expansion, restored `Took`/exit status, `/ssh` setup, masked password entry, and cancellation of a loopback connection test. It asserts credential plaintext and global management notifications never appear.
 
 Linux/WSL validation does not prove Windows/macOS native UI or filesystem behavior. Platform-specific tests must run on those platforms before claiming production support there.

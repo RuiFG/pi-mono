@@ -6,6 +6,7 @@ import { checkAbort, SshError, type HostProfile } from "./domain.ts";
 import { localPath, quote } from "./paths.ts";
 import type { HostKeys } from "./storage.ts";
 import { SudoExchange, type SudoPassword } from "./sudo.ts";
+import type { OutputStream } from "./output.ts";
 
 export type CommandResult = {
   stdout: string; stderr: string; exitCode: number | null; signal?: string;
@@ -13,7 +14,7 @@ export type CommandResult = {
   outcome: "exited" | "unknown";
   elevated?: boolean;
 };
-export type ExecOptions = { timeoutMs?: number; stdin?: string; signal?: AbortSignal; maxBytes?: number; sudo?: SudoPassword };
+export type ExecOptions = { timeoutMs?: number; stdin?: string; signal?: AbortSignal; maxBytes?: number; sudo?: SudoPassword; onOutput?: (stream: OutputStream, data: Buffer) => void };
 
 /** Drains every byte while retaining only a bounded, valid UTF-8 prefix. */
 class Output {
@@ -98,6 +99,11 @@ export class Connection {
     if (!this.alive) throw new SshError("CONNECTION_LOST", "SSH connection closed");
     return new Promise((resolve, reject) => {
       const stdout = new Output(options.maxBytes ?? 128 * 1024), stderr = new Output(options.maxBytes ?? 128 * 1024);
+      const receive = (stream: OutputStream, data: Buffer) => {
+        (stream === "stdout" ? stdout : stderr).push(data);
+        // Call only after sudo protocol filtering. Observers must not interrupt drainage.
+        try { options.onOutput?.(stream, data); } catch { /* UI failure is not command failure. */ }
+      };
       let channel: ClientChannel | undefined;
       let finished = false, timedOut = false, cancelled = false, exited = false;
       let exitCode: number | null = null, exitSignal: string | undefined;
@@ -108,7 +114,7 @@ export class Connection {
         password: options.sudo, signal: authentication.signal,
         write: value => { channel?.write(value); },
         ready: () => { if (!finished && !cancelled && !timedOut) channel?.end(options.stdin ?? ""); },
-        output: data => stderr.push(data),
+        output: data => receive("stderr", data),
         fail: error => {
           if (finished || authentication.signal.aborted) return;
           finished = true; cleanup();
@@ -140,8 +146,8 @@ export class Connection {
           if (finished) { stream?.close(); return; }
           if (error) { finished = true; cleanup(); reject(new SshError("EXEC_FAILED", "SSH server refused the command channel")); return; }
           channel = stream;
-          stream.on("data", (data: Buffer) => stdout.push(data));
-          stream.stderr.on("data", (data: Buffer) => sudo ? sudo.push(data) : stderr.push(data));
+          stream.on("data", (data: Buffer) => { if (!finished) receive("stdout", data); });
+          stream.stderr.on("data", (data: Buffer) => { if (!finished) { if (sudo) sudo.push(data); else receive("stderr", data); } });
           stream.on("error", finish);
           stream.on("exit", (code: number | null, signal?: string) => { exited = true; exitCode = typeof code === "number" ? code : null; exitSignal = signal; });
           stream.on("close", finish);

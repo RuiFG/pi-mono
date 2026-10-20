@@ -1,10 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { RemoteRuntime } from "./src/runtime.ts";
 import { dataDirectory } from "./src/paths.ts";
-import { display } from "./src/permissions.ts";
 import { Dialogs, CredentialDialogs, hostMenu } from "./src/ui.ts";
 import { registerTools } from "./src/tools.ts";
-import { errorText } from "./src/domain.ts";
 
 export default function remoteSsh(pi: ExtensionAPI) {
   let current: ExtensionContext | undefined;
@@ -30,17 +28,18 @@ export default function remoteSsh(pi: ExtensionAPI) {
     return { runtime: await runtime(), sessionId: id, cwd: ctx.cwd, signal: dialogs.signal(signal) };
   };
 
-  registerTools(pi, environment);
+  const native = createBashToolDefinition(process.cwd());
+  registerTools(pi, environment, { renderCall: native.renderCall!, renderResult: native.renderResult! });
   pi.registerCommand("ssh", {
     description: "Manage SSH hosts, test connections, and configure login credentials",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") { ctx.ui.notify("/ssh requires the interactive Pi terminal UI", "error"); return; }
-      if (args.trim()) { ctx.ui.notify("Use /ssh without arguments. Never put credentials in command arguments.", "warning"); return; }
+      if (args.trim()) { await dialogs.feedback(ctx, "Remote SSH", "Use /ssh without arguments. Never put credentials in command arguments."); return; }
       await ctx.waitForIdle();
       try {
         const env = await environment(ctx);
         await hostMenu(ctx, env.runtime, dialogs, env.sessionId);
-      } catch (error) { ctx.ui.notify(display(errorText(error)), "error"); }
+      } catch (error) { await dialogs.error(ctx, error); }
     },
   });
   pi.on("session_start", async (_event, ctx) => { await environment(ctx); });

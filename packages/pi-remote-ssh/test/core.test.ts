@@ -9,6 +9,7 @@ import { remotePath, quote } from "../src/paths.ts";
 import type { Connection, Connector } from "../src/transport.ts";
 import type { HostProfile } from "../src/domain.ts";
 import { PasswordInput } from "../src/password.ts";
+import { Text } from "@earendil-works/pi-tui";
 import { schemas, executeTool, registerTools, toolResult, READ_ONLY } from "../src/tools.ts";
 import { CredentialDialogs, Dialogs } from "../src/ui.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -128,7 +129,7 @@ test("password input masks typing/paste, handles Unicode backspace and clearing,
 test("all 10 tools register English descriptions, explicit schemas, hints and bounded error results", () => {
   const tools: ToolDefinition[] = [];
   const pi = { registerTool: (tool: ToolDefinition) => tools.push(tool) } as unknown as ExtensionAPI;
-  registerTools(pi, async () => { throw new Error("unused"); });
+  registerTools(pi, async () => { throw new Error("unused"); }, { renderCall: () => new Text(""), renderResult: () => new Text("") });
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     "ssh_list_hosts", "ssh_set_workspace", "ssh_shell_exec", "ssh_read_file", "ssh_write_file",
     "ssh_grep", "ssh_glob", "ssh_upload_file", "ssh_download_file", "ssh_reset_connection",
@@ -138,6 +139,7 @@ test("all 10 tools register English descriptions, explicit schemas, hints and bo
     assert.ok(!tools.some(tool => tool.name === removed));
   }
   for (const tool of tools) {
+    assert.equal(typeof tool.renderCall, "function"); assert.equal(typeof tool.renderResult, "function");
     assert.ok(!/[\u4e00-\u9fff]/.test(tool.description));
     assert.equal(tool.annotations?.readOnlyHint, READ_ONLY.has(tool.name as keyof typeof schemas));
     if (tool.name !== "ssh_list_hosts") assert.ok((tool.parameters as unknown as { required: string[] }).required.includes("hostId"));

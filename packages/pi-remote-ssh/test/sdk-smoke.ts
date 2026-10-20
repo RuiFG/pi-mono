@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { temporary } from "./helpers.ts";
+import { renderSmoke } from "./render-smoke.ts";
 
 export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts", import.meta.url))) {
   const temp = await temporary();
@@ -16,6 +17,7 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
   try {
     await resourceLoader.reload();
     assert.deepEqual(resourceLoader.getExtensions().errors, []);
+    renderSmoke(resourceLoader.getExtensions().extensions.flatMap(extension => [...extension.tools.values()].map(tool => tool.definition)).filter(tool => tool.name.startsWith("ssh_")));
     const modelRuntime = await ModelRuntime.create({ authPath: path.join(temp.directory, "auth.json"), modelsPath: null, modelsStorePath: path.join(temp.directory, "models-cache.json"), allowModelNetwork: false, refreshOnCreate: false });
     ({ session } = await createAgentSession({ cwd: temp.directory, agentDir: path.join(temp.directory, "agent"), settingsManager, resourceLoader, modelRuntime, sessionManager: SessionManager.inMemory(temp.directory) }));
     const errors: string[] = [];
@@ -27,8 +29,11 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     const confirmationTitles: string[] = [];
     const secret = "sdk-fixture-secret";
     const ui = {
-      select: async (title: string, choices: string[]) => { const answer = select.shift(); assert.ok(answer && choices.includes(answer), `${title}: unexpected choice ${answer}`); return answer; },
-      input: async () => input.shift(), confirm: async (title: string) => { confirmationTitles.push(title); return confirmations.shift() ?? false; },
+      select: async (title: string, choices: string[]) => {
+        if (choices.includes("Yes") && choices.includes("No")) { confirmationTitles.push(title.split("\n")[0]); return confirmations.shift() ? "Yes" : "No"; }
+        const answer = select.shift(); assert.ok(answer && choices.includes(answer), `${title}: unexpected choice ${answer}`); return answer;
+      },
+      input: async () => input.shift(),
       custom: async (factory: (tui: { requestRender(): void }, theme: unknown, keys: unknown, done: (value: string | undefined) => void) => { handleInput(data: string): void; render(width: number): string[]; dispose(): void }) => {
         let value: string | undefined;
         const component = factory({ requestRender() {} }, undefined, undefined, result => { value = result; });
@@ -46,7 +51,7 @@ export async function smoke(extensionPath = fileURLToPath(new URL("../index.ts",
     ].sort());
     await session.prompt("/ssh");
     assert.equal(select.length, 0); assert.equal(input.length, 0); assert.equal(confirmations.length, 0);
-    assert.ok(notifications.includes("Host saved"));
+    assert.deepEqual(notifications, []);
     assert.deepEqual(confirmationTitles, ["Set login credential now?", "Remember credential?"]);
     const tools = session.agent.state.tools;
     const listed = await tools.find(tool => tool.name === "ssh_list_hosts")!.execute("list", {}, undefined);

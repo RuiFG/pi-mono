@@ -8,6 +8,8 @@ import { SshError, failure, checkAbort } from "./domain.ts";
 import { localPath, remotePath, quote } from "./paths.ts";
 import { sudoIdentity } from "./sudo.ts";
 import * as files from "./files.ts";
+import { CommandOutput, byteTail } from "./output.ts";
+import { sshRenderers, type NativeRenderers } from "./render.ts";
 
 const hostId = z.string().uuid().describe("Required stable host ID returned by ssh_list_hosts. Names are not accepted.");
 const remote = z.string().min(1).refine(v => !v.includes("\0"), "Path contains NUL");
@@ -45,6 +47,7 @@ export type ToolEnvironment = {
   cwd: string;
   signal?: AbortSignal;
   progress?: files.Progress;
+  report?: (value: Record<string, unknown>) => void;
 };
 
 // Each field is consumed only in its corresponding validated tool branch.
@@ -65,6 +68,7 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
     return { ok: true, hosts: runtime.state(sessionId).hosts.map(({ host, ...status }) => ({ id: host.id, name: host.name, hostname: host.hostname, port: host.port, username: host.username, auth: host.auth, jumpHostId: host.jumpHostId, ...status })) };
   }
   const selected = runtime.resolve(sessionId, args.hostId);
+  env.report?.({ hostId: selected.host.id, hostName: selected.host.name, directory: selected.directory });
   const chain = runtime.profiles.chain(selected.host.id);
   const identity = sudoIdentity(chain);
   let local: string | undefined;
@@ -82,6 +86,7 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
   if (sudoIdentity(connection.chain) !== identity) throw new SshError("HOST_CHANGED", "Connection identity no longer matches the selected host");
   checkAbort(signal);
   const directory = selected.directory ?? connection.home;
+  env.report?.({ directory });
   const resolve = (value?: string) => remotePath(value, directory, connection.home);
   const path = resolve(args.path);
   let result: object;
@@ -89,9 +94,14 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
     case "ssh_set_workspace": result = await runtime.setWorkspace(sessionId, selected.host.id, path, signal); break;
     case "ssh_shell_exec": {
       const command = `cd -- ${quote(directory)} || exit $?\n${args.command}`;
-      const options = { signal, stdin: args.stdin, timeoutMs: args.timeoutMs };
-      const output = args.sudo ? await runtime.execSudo(sessionId, connection, command, options) : await connection.exec(command, options);
-      return { ok: output.exitCode === 0 && output.outcome === "exited" && !output.timedOut && !output.cancelled, hostId: selected.host.id, directory, ...output };
+      const capture = new CommandOutput(snapshot => env.report?.(snapshot));
+      const options = { signal, stdin: args.stdin, timeoutMs: args.timeoutMs, onOutput: capture.push.bind(capture) };
+      try {
+        const output = args.sudo ? await runtime.execSudo(sessionId, connection, command, options) : await connection.exec(command, options);
+        return { ok: output.exitCode === 0 && output.outcome === "exited" && !output.timedOut && !output.cancelled, hostId: selected.host.id, directory, ...output, ...capture.finish() };
+      } catch (error) {
+        return { ...failure(error), hostId: selected.host.id, directory, outcome: "unknown", exitCode: null, ...capture.finish() };
+      } finally { capture.finish(); }
     }
     case "ssh_read_file": result = await files.readText(connection, path, args.startLine, args.limit, signal); break;
     case "ssh_write_file": result = await files.upload(connection, Buffer.from(args.content), path, args.overwrite, signal); break;
@@ -104,30 +114,54 @@ export async function executeTool(name: ToolName, input: unknown, env: ToolEnvir
 }
 
 export function toolResult(value: Record<string, unknown>) {
+  // Preserve separate shell streams and the display tail even when JSON escaping
+  // expands the result. Keep log paths and outcome metadata outside truncation.
+  if (typeof value.stdout === "string" || typeof value.stderr === "string" || typeof value.displayOutput === "string") {
+    value = { ...value };
+    for (let budget = 8192; Buffer.byteLength(JSON.stringify(value)) > 60 * 1024 && budget >= 256; budget /= 2) {
+      for (const key of ["stdout", "stderr", "displayOutput"] as const) {
+        if (typeof value[key] === "string" && Buffer.byteLength(value[key]) > budget) {
+          value[key] = key === "displayOutput" ? byteTail(value[key], budget) : Buffer.from(value[key]).subarray(0, budget).toString("utf8").replace(/\uFFFD$/, "");
+          value.truncated = true;
+          if (key === "displayOutput") value.displayTruncated = true;
+        }
+      }
+    }
+  }
   const json = JSON.stringify(value);
   // The preview is JSON encoded again; leave room for escaping quotes and backslashes.
   const details = Buffer.byteLength(json) <= 64 * 1024 ? value : {
     ok: value.ok, code: value.code, hostId: value.hostId,
     outcome: value.outcome, exitCode: value.exitCode, timedOut: value.timedOut,
     cancelled: value.cancelled, elevated: value.elevated,
+    fullOutputPath: value.fullOutputPath, outputLogError: value.outputLogError,
     truncated: true, preview: Buffer.from(json).subarray(0, 24 * 1024).toString("utf8"),
     note: "Output truncated. Request fewer entries or a smaller line range. Never replay an unknown command outcome.",
   };
   return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details, isError: value.ok === false };
 }
 
-export function registerTools(pi: ExtensionAPI, environment: (ctx: ExtensionContext, signal?: AbortSignal) => Promise<ToolEnvironment>) {
+export function registerTools(pi: ExtensionAPI, environment: (ctx: ExtensionContext, signal?: AbortSignal) => Promise<ToolEnvironment>, native: NativeRenderers) {
   for (const name of Object.keys(schemas) as ToolName[]) {
     const { $schema: _schema, ...parameters } = z.toJSONSchema(schemas[name], { target: "draft-7", io: "input" });
     const tool: ToolDefinition<TSchema> = {
       name, label: name, description: descriptions[name], parameters: parameters as TSchema,
+      ...sshRenderers(name, native),
       annotations: { readOnlyHint: READ_ONLY.has(name), destructiveHint: !READ_ONLY.has(name), openWorldHint: true, idempotentHint: false },
       async execute(_id, input, signal, onUpdate, ctx) {
+        let view: Record<string, unknown> = {};
+        const report = (value: Record<string, unknown>) => {
+          view = { ...view, ...value };
+          try { void Promise.resolve(onUpdate?.(toolResult({ ...view, running: true }))).catch(() => {}); } catch { /* Rendering must not change execution. */ }
+        };
+        report({});
         try {
-          const env = await environment(ctx, signal);
-          env.progress = (bytes, total) => onUpdate?.({ content: [{ type: "text", text: `Transferring: ${bytes}${total === undefined ? "" : ` / ${total}`} bytes` }], details: { bytes, total } });
-          return toolResult(await executeTool(name, input, env));
-        } catch (error) { return toolResult(failure(error)); }
+          const env = { ...await environment(ctx, signal) };
+          env.report = report;
+          env.progress = (bytes, total) => report({ bytes, total });
+          const result = await executeTool(name, input, env);
+          return toolResult({ ...view, ...result });
+        } catch (error) { return toolResult({ ...view, ...failure(error) }); }
       },
     };
     pi.registerTool(tool);

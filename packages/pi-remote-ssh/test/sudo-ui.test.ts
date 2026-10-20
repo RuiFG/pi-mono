@@ -73,8 +73,10 @@ for (const mode of ["reuse", "inline", "key", "retry", "cancel"] as const) {
     const dialogs = new Dialogs(); t.after(() => dialogs.close());
     let screens = 0, commands = 0;
     const ctx = { mode: "tui", hasUI: true, ui: {
-      select: async () => { throw new Error("Must not open an intermediate selection dialog"); },
-      confirm: async () => false,
+      select: async (title: string, choices: string[]) => {
+        assert.ok(title.startsWith("Remember credential?"), "Must not open an intermediate credential selection dialog");
+        assert.deepEqual(choices, ["No", "Yes"]); return "No";
+      },
       custom: async (factory: Function) => new Promise(resolve => {
         screens++;
         const component = factory({ requestRender() {} }, undefined, undefined, resolve);

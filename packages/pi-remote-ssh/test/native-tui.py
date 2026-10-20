@@ -7,6 +7,7 @@ import re
 import select
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import tempfile
@@ -19,6 +20,12 @@ cli = package.parents[1] / "node_modules/@earendil-works/pi-coding-agent/dist/bu
 node = shutil.which("node")
 assert node and cli.is_file(), "Run npm ci first"
 with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
+    # Local TCP listener deliberately never sends an SSH banner: test progress
+    # and cancellation without Docker, external hosts, or real credentials.
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
     master, slave = pty.openpty()
     _ = fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     env = {
@@ -27,9 +34,13 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
         "PI_REMOTE_SSH_DATA_DIR": directory + "/ssh", "PI_OFFLINE": "1",
         "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
     }
+    session_file = subprocess.check_output(
+        [node, str(package.parents[1] / "node_modules/tsx/dist/cli.mjs"), str(package / "test/render-session.ts"), directory],
+        env=env, cwd=directory, text=True, timeout=90,
+    ).strip()
     process = subprocess.Popen(
         [node, str(cli), "--offline", "--no-extensions", "-e", str(package / "index.ts"),
-         "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-mcp", "--no-session", "--tui-mode", "regular"],
+         "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-mcp", "--session", session_file, "--tui-mode", "regular"],
         stdin=slave, stdout=slave, stderr=slave, cwd=directory, env=env, start_new_session=True,
     )
     os.close(slave)
@@ -59,15 +70,21 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
 
     try:
         wait_for("No models available")
+        initial = ansi.sub("", all_output)
+        assert "Took 4.2s" in initial and "Command exited with code 7" in initial
+        assert "RENDER_FIXTURE_00" not in initial and "RENDER_FIXTURE_19" in initial
+        _ = os.write(master, b"\x0f")  # Pi's actual Ctrl+O binding, not a test-only toggle.
+        wait_for("RENDER_FIXTURE_00")
+        _ = os.write(master, b"\x0f")
         _ = os.write(master, b"/ssh\r")
         wait_for("Remote SSH")
         _ = os.write(master, b"\r")
         wait_for("Host name")
         _ = os.write(master, b"native-test\r")
         wait_for("Hostname or IP address")
-        _ = os.write(master, b"example.test\r")
+        _ = os.write(master, b"127.0.0.1\r")
         wait_for("SSH port")
-        _ = os.write(master, b"22\r")
+        _ = os.write(master, str(port).encode() + b"\r")
         wait_for("SSH username")
         _ = os.write(master, b"tester\r")
         wait_for("Authentication")
@@ -75,11 +92,23 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
         wait_for("Jump host")
         _ = os.write(master, b"\r")
         wait_for("Set login credential now?")
+        _ = os.write(master, b"\x1b[B\r")
+        wait_for("SSH password for")
+        _ = os.write(master, b"native-fixture-secret\r")
+        wait_for("Remember credential?")
+        # Escape cancels this credential step, preserving the already-saved host.
+        _ = os.write(master, b"\x1b")
+        wait_for("Remote SSH")
+        # The progress overlay must yield to password/remember dialogs and regain
+        # focus afterwards, so Escape cancels the pending network operation.
+        _ = os.write(master, b"\x1b[B\r")
+        wait_for("Test connection")
         _ = os.write(master, b"\r")
         wait_for("SSH password for")
         _ = os.write(master, b"native-fixture-secret\r")
         wait_for("Remember credential?")
-        # Escape declines persistent storage, keeping only this runtime's credential.
+        _ = os.write(master, b"\r")  # Explicit No: memory-only this time.
+        wait_for("Testing native-test: SSH and SFTP...")
         _ = os.write(master, b"\x1b")
         wait_for("Remote SSH")
         _ = os.write(master, b"\x1b")
@@ -91,7 +120,9 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
         assert "Enter to confirm" in rendered and "Ctrl+U to clear" in rendered
         assert "❯ 1." in rendered and "─" * 100 in rendered
         assert "SSH CREDENTIAL" not in rendered and "Private input" not in rendered
-        print("PASS: native Pi TUI /ssh, questionnaire-style masked credential input, no plaintext output, isolated configuration")
+        assert "Host saved" not in rendered and "Operation cancelled" not in rendered
+        assert "Remote SSH — Error" not in rendered
+        print("PASS: native Pi TUI SSH tool replay, Took/exit status, actual Ctrl+O expansion, /ssh masked credentials, progress yielding to authentication, silent cancellation")
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
@@ -101,3 +132,4 @@ with tempfile.TemporaryDirectory(prefix="pi-ssh-native-") as directory:
                 os.killpg(process.pid, signal.SIGKILL)
                 _ = process.wait(timeout=5)
         os.close(master)
+        server.close()
