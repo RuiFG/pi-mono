@@ -26,9 +26,9 @@ pi-mono/
 
 ## Packages
 
-| Package | Purpose | Status |
+| Package | Purpose | Install |
 | --- | --- | --- |
-| [pi-remote-ssh](./packages/pi-remote-ssh/README.md) | Multi-host SSH/SFTP tools, session authorization, and an interactive `/ssh` menu | Local installation; not published to npm |
+| [pi-remote-ssh](./packages/pi-remote-ssh/README.md) | Multi-host SSH/SFTP tools, session authorization, and an interactive `/ssh` menu | `pi install npm:pi-remote-ssh` |
 
 See [package development guidelines](./packages/README.md).
 
@@ -94,4 +94,4 @@ Use your Pi version's native commands to update or remove extensions. Check `pi 
 
 ## Licensing and publishing
 
-A license for first-party code has not yet been selected. Public visibility alone does not grant an open-source license. Before publishing a functional package, specify its license, package name, and published files. Third-party extensions remain subject to their upstream licenses.
+Licenses are specified per package. [pi-remote-ssh](./packages/pi-remote-ssh/README.md) is licensed under the [MIT License](./packages/pi-remote-ssh/LICENSE). Before publishing another functional package, specify its license, package name, and published files; public visibility alone does not grant an open-source license. Third-party extensions remain subject to their upstream licenses.

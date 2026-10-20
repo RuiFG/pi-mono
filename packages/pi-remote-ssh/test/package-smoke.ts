@@ -20,7 +20,7 @@ try {
   const packed = JSON.parse(output) as { filename: string; files: { path: string }[] }[];
   assert.equal(packed.length, 1);
   const files = packed[0].files.map(file => file.path);
-  for (const file of ["index.ts", "src/tools.ts", "src/transport.ts", "src/password.ts", "README.md", "NOTICE.md"]) assert.ok(files.includes(file), file);
+  for (const file of ["index.ts", "src/tools.ts", "src/transport.ts", "src/password.ts", "README.md", "NOTICE.md", "LICENSE"]) assert.ok(files.includes(file), file);
   assert.ok(files.every(file => !file.startsWith("test/") && !file.startsWith("node_modules/") && !file.endsWith(".tgz")));
   const consumer = path.join(temp.directory, "consumer"); await mkdir(consumer);
   await writeFile(path.join(consumer, "package.json"), '{"name":"pi-ssh-package-test","private":true}');

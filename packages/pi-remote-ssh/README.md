@@ -10,9 +10,25 @@ Multi-host SSH and SFTP tools for [Pi](https://pi.dev), with an interactive `/ss
 - Standard password or private-key authentication; encrypted private keys and nested jump hosts are supported. OTP, browser login, and menu-driven bastions are not supported.
 - The server's existing `sh`, `grep`, and optional `sudo`. No remote helper is installed.
 
-The package is currently private and has not been published to npm. Its license is `UNLICENSED` pending a separate licensing decision. See [NOTICE.md](./NOTICE.md) for source provenance.
+Licensed under the [MIT License](./LICENSE). See [NOTICE.md](./NOTICE.md) for source provenance.
 
-## Local installation
+## Installation
+
+Install through Pi's native package mechanism:
+
+```sh
+pi install npm:pi-remote-ssh
+```
+
+To install this specific release:
+
+```sh
+pi install npm:pi-remote-ssh@0.1.0
+```
+
+Restart Pi or reload its resources, then run `/ssh`. Pi loads the TypeScript entry directly; no separate build step is required.
+
+### Local installation from source
 
 From the repository root:
 

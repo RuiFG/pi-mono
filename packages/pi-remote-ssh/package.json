@@ -1,15 +1,15 @@
 {
   "name": "pi-remote-ssh",
   "version": "0.1.0",
-  "private": true,
   "description": "Multi-host SSH and SFTP tools with interactive host management for Pi.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "engines": { "node": ">=22.19.0" },
   "keywords": ["pi-package", "ssh", "sftp"],
   "repository": { "type": "git", "url": "https://github.com/RuiFG/pi-mono.git", "directory": "packages/pi-remote-ssh" },
   "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "src", "README.md", "NOTICE.md"],
+  "files": ["index.ts", "src", "README.md", "NOTICE.md", "LICENSE"],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
